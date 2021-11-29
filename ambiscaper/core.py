@@ -2674,7 +2674,8 @@ class AmbiScaper(object):
 
                     # Convolution will yield a signal of size L+M-1.
                     # In order to preserve the given scene duration, let's cut the final result to the required sample number
-                    output_file_duration_samples = self.duration * self.sr
+                    #
+                    output_file_duration_samples = int(self.duration * self.sr)
                     output_signal = np.ndarray((output_file_duration_samples,num_channels))
                     for i in range(num_channels):
                         output_signal[:,i] = scipy.signal.fftconvolve(file_data[:, i], filter_data.T[:, i])[:output_file_duration_samples]
