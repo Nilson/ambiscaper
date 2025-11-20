@@ -2674,7 +2674,8 @@ class AmbiScaper(object):
 
                     # Convolution will yield a signal of size L+M-1.
                     # In order to preserve the given scene duration, let's cut the final result to the required sample number
-                    output_file_duration_samples = self.duration * self.sr
+                    #
+                    output_file_duration_samples = int(self.duration * self.sr)
                     output_signal = np.ndarray((output_file_duration_samples,num_channels))
                     for i in range(num_channels):
                         output_signal[:,i] = scipy.signal.fftconvolve(file_data[:, i], filter_data.T[:, i])[:output_file_duration_samples]
@@ -2712,12 +2713,21 @@ class AmbiScaper(object):
                 # TODO: do we want to normalize the final output?
                 final_transformer.build(processed_tmpfiles[0].name,
                                         os.path.join(destination_path, audio_filename))
+
             else:
                 # Combiner needed for more than one file
                 final_combiner = sox.Combiner()
                 final_combiner.build([t.name for t in processed_tmpfiles],
                                      os.path.join(destination_path, audio_filename),
                                      'mix')
+
+            ambi_data, ambi_sample_rate = sf.read(os.path.join(destination_path, audio_filename))
+
+            maxVal = np.max(abs(ambi_data[:, 0]))
+            if maxVal > 0.86: #-1 dB
+                # normalize entire ambi_data
+                ambi_data = ambi_data / (maxVal * 1.15)
+                sf.write(os.path.join(destination_path, audio_filename), ambi_data, ambi_sample_rate)
 
             # Finally, clear all intermediate tmp files
             [os.remove(t.name) for t in downmix_tmpfiles]
@@ -2792,9 +2802,13 @@ class AmbiScaper(object):
                                  filename + '.wav',
                                  annotation_array,
                                  disable_sox_warnings=disable_sox_warnings)
-
-
-
+            # ambi_data, ambi_sample_rate = sf.read(os.path.join(destination_path, filename))
+            #
+            # maxVal = np.max(abs(ambi_data[:, 0]))
+            # if maxVal > 0.99:
+            #     # normalize entire ambi_data
+            #     ambi_data = ambi_data / (maxVal * 1.02)
+            #     sf.write(os.path.join(destination_path, filename), ambi_data, ambi_sample_rate)
 
         # Finally save JAMS to disk too
         # NOTE: using strict=False for allowing None values of not-implemented

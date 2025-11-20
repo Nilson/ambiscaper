@@ -4,6 +4,17 @@
 
 Ambiscaper: a tool for automatic dataset generation and annotation of reverberant Ambisonics audio
 
+This is a fork from https://github.com/andresperezlopez/ambiscaper (commit bce1fe2,  Sep 14, 2018)
+Please refer to the [original documentation](http://ambiscaper.readthedocs.io/) for implementation details.
+Ambiscaper was originally forked from [Scaper](http://github.com/justinsalamon/scaper) (commit e0cc1c9, 17th October 2017)
+
+## Additions:
+
+- support for flac format 
+- rendering to binaural using Google Omnitone's symmetric HRTFs (originally from SADIE database, York University)
+- rendering binaural files with head rotation and store head rotation data in 3rd, 4th, and 5th audio channel 
+
+<!--
 [//]: #[![PyPI](https://img.shields.io/pypi/v/scaper.svg)](https://pypi.python.org/pypi/scaper)
 [![License: GPL v3](https://img.shields.io/badge/License-GPL%20v3-blue.svg)](https://www.gnu.org/licenses/gpl-3.0)
 [![Build Status](https://travis-ci.org/andresperezlopez/ambiscaper.svg?branch=master)](https://travis-ci.org/andresperezlopez/ambiscaper)
@@ -11,11 +22,7 @@ Ambiscaper: a tool for automatic dataset generation and annotation of reverberan
 [![Documentation Status](https://readthedocs.org/projects/ambiscaper/badge/?version=latest)](http://ambiscaper.readthedocs.io/en/latest/?badge=latest)
 
 [//]: #[![PyPI](https://img.shields.io/badge/python-2.7%2C%203.4%2C%203.5%2C%203.6-blue.svg)]()
-
-Please refer to the [documentation](http://ambiscaper.readthedocs.io/) for implementation details.
-
-Originally forked from [Scaper](http://github.com/justinsalamon/scaper) (commit e0cc1c9, 17th October 2017)
-
+-->
 
 ## Motivation
 

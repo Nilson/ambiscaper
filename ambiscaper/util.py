@@ -109,8 +109,9 @@ def _get_sorted_audio_files_recursive(folder_path):
 
     files = []
     for dirpath, dirnames, dirfiles in os.walk(folder_path):
-        for f in fnmatch.filter(dirfiles, '*.wav'):
-            files.append(os.path.join(dirpath,f))
+        for extension in ('*.wav', '*.flac'): # include also .flac files [NP]
+            for f in fnmatch.filter(dirfiles, extension):
+                files.append(os.path.join(dirpath,f))
 
     files = sorted(files)
     return files
