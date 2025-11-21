@@ -94,7 +94,7 @@ SmirReverbSpec = namedtuple(
      'reflectivity',
      'source_type',
      'microphone_type'
-     ], verbose=False)
+     ])
 
 
 # class SmirReverb(AmbiScaperReverb):
@@ -322,7 +322,7 @@ class SmirReverb():
             if (room_dimensions is None or
                     not isinstance(room_dimensions, list) or
                     not all(isinstance(dim,Number) for dim in room_dimensions) or
-                    len(room_dimensions) is not 3):
+                    len(room_dimensions) != 3):
                 return False
             else:
                 return True
@@ -430,7 +430,7 @@ class SmirReverb():
             # wall_reflectivity: list of 6 floats in the range [0,1]
             if (wall_reflectivity is None or
                     not isinstance(wall_reflectivity, list) or
-                    len(wall_reflectivity) is not 6 or
+                    len(wall_reflectivity) != 6 or
                     not all(isinstance(r, float) and 0<=r<=1 for r in wall_reflectivity)):
                 return False
             else:
@@ -623,7 +623,7 @@ SOFAReverbSpec = namedtuple(
     'SOFAReverbSpec',
     ['name',
      'wrap'
-    ], verbose=False)
+    ])
 
 ######## CLASS
 

@@ -160,13 +160,13 @@ def get_real_spherical_harmonic(azimuth, elevation, ambisonics_order, ambisonics
     # NOTE THAT EVERYTHING IS CHANGED RESPECT TO THE MAN ENTRY
     # here, we use phi as azimuth and theta as elevation
     # furthermore, L is ambisonics order and M is ambisonics degree
-    return np.asscalar(np.real(sph_harm(ambisonics_degree,ambisonics_order,azimuth,elevation)))
+    return np.real(sph_harm(ambisonics_degree,ambisonics_order,azimuth,elevation)).item()
 
 def get_imag_spherical_harmonic(azimuth, elevation, ambisonics_order, ambisonics_degree):
     # NOTE THAT EVERYTHING IS CHANGED RESPECT TO THE MAN ENTRY
     # here, we use phi as azimuth and theta as elevation
     # furthermore, L is ambisonics order and M is ambisonics degree
-    return np.asscalar(np.imag(sph_harm(ambisonics_degree,ambisonics_order,azimuth,elevation)))
+    return np.imag(sph_harm(ambisonics_degree,ambisonics_order,azimuth,elevation)).item()
 
 # eq 16
 def get_ambisonics_spread_coefs(alpha, tau, max_ambisonics_order):
@@ -250,7 +250,7 @@ def change_channel_ordering_fuma_2_acn(fuma_array):
         raise AmbiScaperError(
             'Error: ACN conversion: input array not a numpy ndarray')
     # Method only valid for 1st order
-    elif np.shape(fuma_array)[1] is not 4:
+    elif np.shape(fuma_array)[1] != 4:
         raise AmbiScaperError(
             'Error: ACN conversion: input array is not order 1')
 
@@ -275,7 +275,7 @@ def change_normalization_fuma_2_sn3d(fuma_array):
         raise AmbiScaperError(
             'Error: SN3D conversion: input array not a numpy ndarray')
     # Method only valid for 1st order
-    elif np.shape(fuma_array)[1] is not 4:
+    elif np.shape(fuma_array)[1] != 4:
         raise AmbiScaperError(
             'Error: SN3D conversion: input array is not order 1')
 

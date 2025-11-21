@@ -50,7 +50,7 @@ for i in range(num_soundscapes):
 
     ### Genereate the audio and the annotation
     outfolder = '/Volumes/Dinge/ambiscaper/SOFAtesting/'  # watch out! outfolder must exist
-    destination_path = os.path.join(outfolder, "soundscape{:d}".format(i))
+    destination_path = os.path.join(outfolder, f"soundscape{i:d}")
 
     asc.generate(destination_path=destination_path,
                  generate_txt=True,

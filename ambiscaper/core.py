@@ -64,7 +64,7 @@ EventSpec = namedtuple(
     ['source_file', 'event_id',
      'source_time', 'event_time', 'event_duration',
      'event_azimuth', 'event_elevation', 'event_spread',
-     'snr', 'role', 'pitch_shift', 'time_stretch'], verbose=False)
+     'snr', 'role', 'pitch_shift', 'time_stretch'])
 '''
 Container for storing event specifications, either probabilistic (i.e. using
 distribution tuples to specify possible values) or instantiated (i.e. storing
@@ -356,7 +356,7 @@ def _validate_source_file(source_file_tuple):
         # 1. the filepath must point to an existing file
         if not os.path.isfile(source_file_tuple[1]):
             raise AmbiScaperError(
-                "Source file not found: {:s}".format(source_file_tuple[1]))
+                f"Source file not found: {source_file_tuple[1]:s}")
     # Otherwise it must be specified using "choose"
     elif source_file_tuple[0] == "choose":
         if source_file_tuple[1]:  # list is not empty
@@ -850,7 +850,7 @@ def _validate_soundscape_duration(duration):
 
 
 
-class AmbiScaper(object):
+class AmbiScaper:
     '''
     Create an AmbiScaper object.
 
@@ -1474,7 +1474,7 @@ class AmbiScaper(object):
         # For background events the duration is fixed to self.duration
         # (which must be > 0), but for foreground events it could
         # potentially be non-positive, hence the loop.
-        event_duration = -np.Inf
+        event_duration = -np.inf
         while event_duration <= 0:
             event_duration = _get_value_from_dist(event.event_duration)
 
@@ -1504,7 +1504,7 @@ class AmbiScaper(object):
             time_stretch = None
             event_duration_stretched = event_duration
         else:
-            time_stretch = -np.Inf
+            time_stretch = -np.inf
             while time_stretch <= 0:
                 time_stretch = _get_value_from_dist(event.time_stretch)
             # compute duration after stretching
@@ -1540,7 +1540,7 @@ class AmbiScaper(object):
                         AmbiScaperWarning)
 
         # determine source time
-        source_time = -np.Inf
+        source_time = -np.inf
         while source_time < 0:
             source_time = _get_value_from_dist(event.source_time)
 
@@ -1562,7 +1562,7 @@ class AmbiScaper(object):
         # determine event time
         # for background events the event time is fixed to 0, but for
         # foreground events it's not.
-        event_time = -np.Inf
+        event_time = -np.inf
         while event_time < 0:
             event_time = _get_value_from_dist(event.event_time)
 
@@ -1590,7 +1590,7 @@ class AmbiScaper(object):
                     event_time = 0.0
                     if not disable_instantiation_warnings:
                         warnings.warn(
-                            '{:s}: Event time set to 0.0 in order to avoid negative times'.format(event_id),
+                            f'{event_id:s}: Event time set to 0.0 in order to avoid negative times',
                             AmbiScaperWarning)
                 else:
                     if not disable_instantiation_warnings:
@@ -2391,7 +2391,7 @@ class AmbiScaper(object):
             # and load to memory the IR data.
             # In this way we will avoid opening the file for every event in the spec.
             if annotation_reverb:
-                if annotation_reverb.namespace is 'ambiscaper_sofa_reverb':
+                if annotation_reverb.namespace == 'ambiscaper_sofa_reverb':
 
                     file_name =  annotation_reverb.data.value[0]['name']
                     full_path =  self.sofaReverb.generate_sofa_file_full_path(file_name)
@@ -2408,12 +2408,8 @@ class AmbiScaper(object):
 
 
             # Iterate over all events specified in the event annotation
-            # fg_event_idx = -1 TODO
-            for event in annotation_event.data.iterrows():
-
-                # first item is index, second is event dictionary
-                e = event[1]
-
+            # fg_event_idx = -1 TODO            
+            for i, e in enumerate(annotation_event.data):
                 audio_event_filename = e.value['event_id']+'.wav'
                 ir_filename = 'ir_'+audio_event_filename
 
@@ -2561,7 +2557,7 @@ class AmbiScaper(object):
                     # for r in annotation_reverb.data.iterrows():
                     #     print(r[1].value['name'])
 
-                    if annotation_reverb.namespace is 'ambiscaper_smir_reverb':
+                    if annotation_reverb.namespace == 'ambiscaper_smir_reverb':
                     # if type(self.reverb_spec) is SmirReverbSpec:
                         ### Model IR through smir_generator in matlab ###
 
@@ -2581,7 +2577,7 @@ class AmbiScaper(object):
 
 
 
-                    elif annotation_reverb.namespace is 'ambiscaper_sofa_reverb':
+                    elif annotation_reverb.namespace == 'ambiscaper_sofa_reverb':
                         # Get the IRs associated to the source position
                         # They are stored at the sofa_chosen_emitter_indices list
                         # Watch out with the indices (wav files numbering starting at 1)
@@ -2822,13 +2818,12 @@ class AmbiScaper(object):
             txt_path = os.path.join(destination_path, filename + '.txt')
 
             df = pd.DataFrame(columns=['onset', 'offset', 'name'])
-
-            for idx, row in annotation_array.search(namespace='ambiscaper_sound_event')[0].data.iterrows():
-                if row.value['role'] == 'foreground':
-                    name = row.value['event_id']
-                    newrow = ([row.time.total_seconds(),
-                               row.time.total_seconds() +
-                               row.duration.total_seconds(),
+            
+            for obs in annotation_array.search(namespace='ambiscaper_sound_event')[0].data:
+                if obs.value['role'] == 'foreground':    
+                    name = obs.value['event_id']
+                    newrow = ([obs.time,
+                               obs.time + obs.duration,
                                name])
                     df.loc[len(df)] = newrow
 

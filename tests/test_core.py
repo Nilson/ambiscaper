@@ -1402,10 +1402,10 @@ def test_generate():
 
     # validate txt
     txt_file_name = os.path.join(tmp_dir, tmp_name + '.txt')
-    with open(txt_file_name, mode='r') as txt:
+    with open(txt_file_name) as txt:
         txtreader = csv.reader(txt, delimiter='\t')
 
-        with open(REG_TXT_PATH, mode='r') as regtxt:
+        with open(REG_TXT_PATH) as regtxt:
             regtxtreader = csv.reader(regtxt, delimiter='\t')
 
             for row1, row2 in zip(txtreader, regtxtreader):

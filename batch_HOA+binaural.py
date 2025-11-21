@@ -7,7 +7,6 @@
 from ambiscaper import *
 import numpy as np
 import os
-import tslib 
 import soundfile as sf
 import scipy.signal
 import random
@@ -31,7 +30,7 @@ symVec = [1,
          -1,-1,-1,-1,-1, 1, 1, 1, 1, 1, 1]   
 
 # get ht_data from ht-captures folder
-ht_path = os.path.join(os. getcwd(), '../bin2foa/bin2foa/resources/ht-captures/')
+ht_path = os.path.join(os. getcwd(), '../resources/ht-captures/')
 ht_data_name = []
 for item in os.listdir(ht_path):
     if os.path.splitext(item)[1] == '.flac':
@@ -299,4 +298,3 @@ for scene_idx in range(num_scenes):
     #remove HOA file to save some HD space:
 os.remove(destination_path+"/"+folder+".wav")
 
-               

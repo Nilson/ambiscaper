@@ -54,7 +54,7 @@ for dataset_idx in range(num_datasets):
         outfolder = '/Volumes/Dinge/ambiscaper/IWAENC2018/'+'dataset'+str(dataset_idx)
         if not os.path.exists(outfolder):
             os.mkdir(outfolder) # watch out! outfolder must exist
-        destination_path = os.path.join(outfolder, "soundscape{:d}".format(soundscape_idx))
+        destination_path = os.path.join(outfolder, f"soundscape{soundscape_idx:d}")
 
         asc.generate(destination_path=destination_path,
                      generate_txt=True,

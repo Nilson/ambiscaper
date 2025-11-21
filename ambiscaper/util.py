@@ -189,12 +189,13 @@ def max_polyphony(ann):
     '''
 
     # If there are no foreground events the polyphony is 0
-    roles = [v['role'] for v in ann.data['value']]
+    roles = [obs.value['role'] for obs in ann.data]
+
     if 'foreground' not in roles:
         return 0
     else:
-        # Keep only foreground events
-        int_time, int_val = ann.data.to_interval_values()
+        # Keep only foreground events        
+        int_time, int_val = ann.to_interval_values()
         int_time_clean = []
         for t, v in zip(int_time, int_val):
             if v['role'] == 'foreground':
@@ -261,7 +262,7 @@ def polyphony_gini(ann, hop_size=0.01):
                 ann.namespace))
 
     # If there are no foreground events the gini coefficient is 0
-    roles = [v['role'] for v in ann.data['value']]
+    roles = [obs.value['role'] for obs in ann.data]
     if 'foreground' not in roles:
         return 0
 
@@ -270,11 +271,10 @@ def polyphony_gini(ann, hop_size=0.01):
     times = np.linspace(0, (n_samples-1) * hop_size, n_samples)
     values = np.zeros_like(times)
 
-    for idx in ann.data.index:
-        if ann.data.loc[idx, 'value']['role'] == 'foreground':
-            start_time = ann.data.loc[idx, 'time'].total_seconds()
-            end_time = (
-                start_time + ann.data.loc[idx, 'duration'].total_seconds())
+    for obs in ann.data:
+        if obs.value['role'] == 'foreground':
+            start_time = obs.time
+            end_time = start_time + obs.duration
             start_idx = np.argmin(np.abs(times - start_time))
             end_idx = np.argmin(np.abs(times - end_time)) - 1
             values[start_idx:end_idx + 1] += 1
@@ -439,7 +439,7 @@ def cartesian_to_spherical(cartesian_list):
         if not isinstance(list_arg,list) and not isinstance(list_arg,np.ndarray):
             raise AmbiScaperError(
                 'Error on Cartesian to Spherical conversion: argument not a list, given ' + str(type(list_arg)) + str(list_arg))
-        if len(list_arg) is not 3:
+        if len(list_arg) != 3:
             raise AmbiScaperError(
                 'Error on Cartesian to Spherical conversion: argument should have lenght of 3, given' + str(list_arg))
         if not any([isinstance(f,float) for f in list_arg]):
@@ -455,7 +455,7 @@ def cartesian_to_spherical(cartesian_list):
 
     r = np.sqrt((x*x)+(y*y)+(z*z))
     azimuth = np.arctan2(y,x)
-    elevation = np.arcsin((z / r)) if r != 0 else 0
+    elevation = np.arcsin(z / r) if r != 0 else 0
 
     return [azimuth,elevation,r]
 
@@ -523,7 +523,7 @@ def spherical_to_cartesian(spherical_list):
         if not isinstance(list_arg, list) and not isinstance(list_arg, np.ndarray):
             raise AmbiScaperError(
                 'Error on Spherical to Cartesian conversion: argument not a list, given ' + str(type(list_arg)) + str(list_arg))
-        if len(list_arg) is not 3:
+        if len(list_arg) != 3:
             raise AmbiScaperError(
                 'Error on Spherical to Cartesian conversion: argument should have lenght of 3, given ' + str(list_arg))
         if not any([isinstance(f,float) for f in list_arg]):
@@ -647,14 +647,14 @@ def find_closest_spherical_point(point,list_of_points,criterium='azimuth'):
         target_ele = float(wrap_number(p_ele,-1*np.pi/2,np.pi/2))
 
         # Closer in azimuth
-        if criterium is 'azimuth':
+        if criterium == 'azimuth':
             dist = np.abs(azi - target_azi)
             dist = min(dist, (2 * np.pi) - dist) # Because azimuth is periodic every 2pi
 
-        elif criterium is 'elevation':
+        elif criterium == 'elevation':
             dist = np.abs(ele - target_ele)
 
-        elif criterium is 'surface': # both angles
+        elif criterium == 'surface': # both angles
             dist_azi = np.abs(azi - target_azi)
             dist_azi = min(dist_azi, (2 * np.pi) - dist_azi)  # Because azimuth is periodic every 2pi
             dist_ele = np.abs(ele - target_ele)
@@ -689,9 +689,9 @@ def _generate_event_id_from_idx(event_idx,role):
 
     '''
 
-    if role is 'foreground':
+    if role == 'foreground':
         substring = event_foreground_id_string
-    elif role is 'background':
+    elif role == 'background':
         substring = event_background_id_string
     else:
         raise AmbiScaperError(
@@ -732,9 +732,9 @@ def _get_event_idx_from_id(event_id,role):
 
     '''
 
-    if role is 'foreground':
+    if role == 'foreground':
         substring = event_foreground_id_string
-    elif role is 'background':
+    elif role == 'background':
         substring = event_background_id_string
     else:
         raise AmbiScaperError(
@@ -767,7 +767,7 @@ def _get_event_idx_from_id(event_id,role):
 ## TODO: COPYED FROM CORE TO AVOID CIRCULAR DEPENDENCIES
 
 SUPPORTED_DIST = {"const": lambda x: x,
-                  "choose": lambda x: scipy.random.choice(x),
+                  "choose": lambda x: np.random.choice(x),
                   "uniform": random.uniform,
                   "normal": random.normalvariate,
                   "truncnorm": _trunc_norm}
@@ -804,7 +804,7 @@ def _validate_distribution(dist_tuple):
     # Make sure the first item is one of the supported distribution names
     if dist_tuple[0] not in SUPPORTED_DIST.keys():
         raise AmbiScaperError(
-            "Unsupported distribution name: {:s}".format(dist_tuple[0]))
+            f"Unsupported distribution name: {dist_tuple[0]:s}")
 
     # If it's a constant distribution, tuple must be of length 2
     if dist_tuple[0] == 'const':
