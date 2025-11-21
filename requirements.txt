@@ -1,0 +1,12 @@
+backports.statistics==0.1.0
+jams==0.3.5
+matlab_wrapper==1
+numpy==2.3.5
+pandas==2.3.3
+pysofaconventions==0.1.5
+pytest==9.0.1
+scipy==1.16.3
+setuptools==80.9.0
+six==1.17.0
+soundfile==0.13.1
+sox==1.5.0
