@@ -1472,7 +1472,8 @@ class AmbiScaper:
         # Get the duration of the source audio file
         # It must use the expanded source file name
         source_file_path = os.path.abspath(source_file)
-        source_duration = sox.file_info.duration(source_file_path)
+        #source_duration = sox.file_info.duration(source_file_path)
+        source_duration = sf.info(source_file_path).duration
 
         # Determine event duration
         # For background events the duration is fixed to self.duration
