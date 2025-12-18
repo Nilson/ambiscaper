@@ -2730,8 +2730,21 @@ class AmbiScaper:
                 sf.write(os.path.join(destination_path, audio_filename), ambi_data, ambi_sample_rate)
 
             # Finally, clear all intermediate tmp files
-            [os.remove(t.name) for t in downmix_tmpfiles]
-            [os.remove(t.name) for t in processed_tmpfiles]
+            for t in downmix_tmpfiles:
+                try:
+                    t.close()           # close the file handle
+                    os.remove(t.name)   # then remove the file
+                except PermissionError:
+                    print(f"Could not delete {t.name}, file still in use.")
+ 
+            for t in processed_tmpfiles:
+                try:
+                    t.close()           # close the file handle
+                    os.remove(t.name)   # then remove the file
+                except PermissionError:
+                    print(f"Could not delete {t.name}, file still in use.") 
+            #[os.remove(t.name) for t in downmix_tmpfiles]
+            #[os.remove(t.name) for t in processed_tmpfiles]
 
 
     def generate(self,
