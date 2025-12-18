@@ -7,7 +7,11 @@ Ambiscaper core methods
 
 import soundfile as sf
 import scipy.signal
-import sox
+try:
+    import soxbindings as sox
+except: # pragma: no cover
+    import sox # pragma: no cover
+import sox as pysox # needed for combiner()
 import random
 import os
 import warnings
@@ -2478,7 +2482,7 @@ class AmbiScaper:
                 # note2: we cannot use a plain Transformer,
                 # because volume controls are still not implemented
                 # on the remix method
-                fx_combiner = sox.Combiner()
+                fx_combiner = pysox.Combiner()
                 fx_combiner.convert(samplerate=self.sr,
                                     n_channels=get_number_of_ambisonics_channels(self.ambisonics_order),  # num_ambisonics_channels
                                     bitdepth=None)
@@ -2712,7 +2716,7 @@ class AmbiScaper:
 
             else:
                 # Combiner needed for more than one file
-                final_combiner = sox.Combiner()
+                final_combiner = pysox.Combiner()
                 final_combiner.build([t.name for t in processed_tmpfiles],
                                      os.path.join(destination_path, audio_filename),
                                      'mix')
