@@ -4,7 +4,8 @@
 Utility functions for audio processing using FFMPEG (beyond sox). Based on:
 https://github.com/mathos/neg23/
 '''
-
+import numpy as np
+import pyloudnorm
 import subprocess
 from .ambiscaper_exceptions import AmbiScaperError
 
@@ -50,8 +51,57 @@ def r128stats(filepath):
     return stats_dict
 
 
-def get_integrated_lufs(filepath):
+def get_integrated_lufs_old(filepath):
     '''Returns the integrated lufs for an audiofile'''
 
     loudness_stats = r128stats(filepath)
     return loudness_stats['I']
+
+def get_integrated_lufs(audio_array, samplerate, min_duration=0.5,
+                        filter_class='K-weighting', block_size=0.400):
+    """
+    Returns the integrated LUFS for a numpy array containing
+    audio samples.
+
+    For files shorter than 400 ms pyloudnorm throws an error. To avoid this, 
+    files shorter than min_duration (by default 500 ms) are self-concatenated 
+    until min_duration is reached and the LUFS value is computed for the 
+    concatenated file.
+
+    Parameters
+    ----------
+    audio_array : np.ndarray
+        numpy array containing samples or path to audio file for computing LUFS
+    samplerate : int
+        Sample rate of audio, for computing duration
+    min_duration : float
+        Minimum required duration for computing LUFS value. Files shorter than
+        this are self-concatenated until their duration reaches this value
+        for the purpose of computing the integrated LUFS. Caution: if you set
+        min_duration < 0.4, a constant LUFS value of -70.0 will be returned for
+        all files shorter than 400 ms.
+    filter_class : str
+        Class of weighting filter used.
+        - 'K-weighting' (default)
+        - 'Fenton/Lee 1'
+        - 'Fenton/Lee 2'
+        - 'Dash et al.'
+    block_size : float 
+        Gating block size in seconds. Defaults to 0.400.
+    
+    Returns
+    -------
+    loudness
+        Loudness in terms of LUFS 
+    """
+    duration = audio_array.shape[0] / float(samplerate)
+    if duration < min_duration:
+        ntiles = int(np.ceil(min_duration / duration))
+        audio_array = np.tile(audio_array, (ntiles, 1))
+    meter = pyloudnorm.Meter(
+        samplerate, filter_class=filter_class, block_size=block_size
+    )
+    loudness = meter.integrated_loudness(audio_array)
+    # silent audio gives -inf, so need to put a lower bound.
+    loudness = max(loudness, -70) 
+    return loudness
