@@ -12,6 +12,8 @@ import scipy.signal
 import random
 from random import choice
 #from pedalboard import Pedalboard, Reverb, load_plugin
+random.seed(42)
+np.random.seed(42)
 
 # AmbiScaper settings
 soundscape_duration = 15.0 #35.0
