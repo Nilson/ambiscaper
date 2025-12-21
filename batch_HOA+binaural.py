@@ -119,9 +119,9 @@ for scene_idx in range(num_scenes):
     sf.write(outfolderFOA+"/"+folder+"_horizontalOnly_AMBIX.flac", ambi_data[:,0:4], ambi_sample_rate)  #, subtype='FLOAT')
 
 
-## Binauralization with Google Omnitone
+    ## Binauralization with Google Omnitone
     assert(ambi_sample_rate==hrtf_sample_rate)
-    print(ambi_data.shape)
+    #print(ambi_data.shape)
     output_file_duration_samples = ambi_data.shape[0]
     #print(output_file_duration_samples)
     output_signal = np.zeros((output_file_duration_samples+hrtf_data.shape[0]-1, numChans))
