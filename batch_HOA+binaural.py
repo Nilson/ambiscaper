@@ -12,6 +12,8 @@ import scipy.signal
 import random
 from random import choice
 #from pedalboard import Pedalboard, Reverb, load_plugin
+import time
+
 random.seed(42)
 np.random.seed(42)
 
@@ -57,6 +59,7 @@ for scene_idx in range(num_scenes):
     folder = "scene"+str(scene_idx)
     destination_path = os.path.join(outfolder, folder)
     ### Create an ambiscaper instance
+    start_time = time.time()
     ambiscaper = AmbiScaper(duration=soundscape_duration,
                             ambisonics_order=ambisonics_order,
                             fg_path=samples_folder,
@@ -98,7 +101,7 @@ for scene_idx in range(num_scenes):
                         disable_sox_warnings=True,
                         disable_instantiation_warnings=True)
 
-    
+    print("--- %s seconds ---" % (time.time() - start_time))
     ambi_data, ambi_sample_rate = sf.read(destination_path+"/"+folder+".wav")
 
 
