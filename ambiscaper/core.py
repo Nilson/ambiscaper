@@ -2567,12 +2567,12 @@ class AmbiScaper:
                         #        )
 
                         # Pitch shift
-                        if e.value['pitch_shift'] is not None:
+                        if e.value['pitch_shift'] != (0 or None):
                             #print('Applying pitch shift of {} cents'.format(e.value['pitch_shift']))
                             tfm.pitch(e.value['pitch_shift'], quick=quick_pitch_time)
 
-                        # Time stretch
-                        if e.value['time_stretch'] is not None:
+                        # Time stretch                        
+                        if e.value['time_stretch'] != (1 or None): 
                             factor = 1.0 / float(e.value['time_stretch'])
                             #print('Applying time stretch of factor {}'.format(factor))
                             tfm.tempo(factor, audio_type='s', quick=quick_pitch_time)
