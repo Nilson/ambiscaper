@@ -301,5 +301,5 @@ for scene_idx in range(num_scenes):
         output_signal[:,2] = yaw_deg/180
         sf.write(destination_path+"/../"+folder+"_horizontalOnly_rot_"+str(yaw_deg)+"_bin_test.flac", output_signal2, ambi_sample_rate)#, subtype='FLOAT')
     #remove HOA file to save some HD space:
-os.remove(destination_path+"/"+folder+".wav")
+    #os.remove(destination_path+"/"+folder+".wav")
 
