@@ -33,7 +33,7 @@ from .util import _validate_folder_path
 from .util import max_polyphony
 from .util import polyphony_gini
 from .util import is_real_number, is_real_array
-from .audio import get_integrated_lufs_old, get_integrated_lufs
+from .audio import get_integrated_lufs_old, get_integrated_lufs, peak_normalize_ambi
 from .ambisonics import get_number_of_ambisonics_channels, change_channel_ordering_fuma_2_acn, change_normalization_fuma_2_sn3d
 from .ambisonics import _validate_ambisonics_order
 from .ambisonics import get_ambisonics_spread_coefs
@@ -2286,6 +2286,12 @@ class AmbiScaper:
                         destination_path,
                         audio_filename,
                         annotation_array,
+                        reverb=None,
+                        fix_clipping=False,
+                        peak_normalization=False,
+                        quick_pitch_time=False, 
+                        save_isolated_events=False,
+                        isolated_events_path=None,                                    
                         disable_sox_warnings=True):
         '''
         Generate audio based on a sound_event annotation and save to disk.
@@ -2305,6 +2311,43 @@ class AmbiScaper:
             (no reverberation) and 1 (maximum reverberation). Use None
             (default) to prevent the soundscape from going through the reverb
             module at all.
+        fix_clipping: bool
+            When True (default=False), checks the soundscape audio for clipping
+            (abs(sample) > 1). If so, the soundscape waveform is peak normalized,
+            i.e., scaled such that max(abs(soundscape_audio)) = 1. The audio for
+            each isolated event is also scaled accordingly. Note: this will change
+            the actual value of `ref_db` in the generated audio. The updated
+            `ref_db` value will be stored in the JAMS annotation. The SNR of
+            foreground events with respect to the background is unaffected except
+            when extreme scaling is required to prevent clipping.
+        peak_normalization : bool
+            When True (default=False), normalize the generated soundscape audio
+            such that max(abs(soundscape_audio)) = 1. The audio for
+            each isolated event is also scaled accordingly. Note: this will change
+            the actual value of `ref_db` in the generated audio. The updated
+            `ref_db` value will be stored in the JAMS annotation. The SNR of
+            foreground events with respect to the background is unaffected except
+            when extreme scaling is required to achieve peak normalization.
+        quick_pitch_time : bool
+            When True (default=False), time stretching and pitch shifting will be
+            applied with `quick=True`. This is much faster but the resultant 
+            audio is generally of lower audio quality.
+        save_isolated_events : bool
+            If True, this will save the isolated foreground events and
+            backgrounds in a directory adjacent to the generated soundscape
+            mixture, or to the path defined by `isolated_events_path`. The
+            audio of the isolated events sum up to the mixture if reverb is not
+            applied. Isolated events can be found (by default) at
+            `<audio_outfile parent folder>/<audio_outfile name>_events`.
+            Isolated event file names follow the pattern: `<role><idx>_<label>`,
+            where idx is the index of the isolated event in self.fg_spec or
+            self.bg_spec (this allows events of the same label to be added more
+            than once to the soundscape without breaking things). Role is
+            "background" or "foreground". For example: `foreground0_siren.wav`
+            or `background0_park.wav`.
+        isolated_events_path : str
+            Path to folder for saving isolated events. If None, defaults to
+            `<audio_path parent folder>/<audio_path name>_events`.
         disable_sox_warnings : bool
             When True (default), warnings from the pysox module are suppressed
             unless their level is ``'CRITICAL'``.
@@ -2356,6 +2399,10 @@ class AmbiScaper:
         else:
             temp_logging_level = logging.getLogger().level
 
+        scale_factor = 1.0
+        ref_db_change = 0
+        peak_db = -1.0 #TODO: make it configurable
+
         with _set_temp_logging_level(temp_logging_level):
 
             # We maintain three lists for handling convenience audio files
@@ -2373,16 +2420,17 @@ class AmbiScaper:
 
             # Create the separated source subfolder
             # Again, if already exists, will be overrided
-            source_folder_name = 'source'
-            destination_source_path = os.path.join(destination_path, source_folder_name)
-            try:
-                os.mkdir(destination_source_path)
-            except OSError as err:
-                if err.errno != 17:  # folder exists
-                    raise
-                    # If we arrived here because the folder already existed,
-                    # don't warn again, since the parent folder also existed
-                    # and the user already received a warning
+            if save_isolated_events == True:
+                source_folder_name = 'source'
+                destination_source_path = os.path.join(destination_path, source_folder_name)
+                try:
+                    os.mkdir(destination_source_path)
+                except OSError as err:
+                    if err.errno != 17:  # folder exists
+                        raise
+                        # If we arrived here because the folder already existed,
+                        # don't warn again, since the parent folder also existed
+                        # and the user already received a warning
 
 
             # Define functions to handle the type of event
@@ -2415,19 +2463,235 @@ class AmbiScaper:
             # Iterate over all events specified in the event annotation
             # fg_event_idx = -1 TODO   
 
+            old_method = True
+            if old_method==False: # new method                    
+                event_audio_list = []                 
+                duration_in_samples = int(self.duration * self.sr)   
+                mix = np.zeros((duration_in_samples, get_number_of_ambisonics_channels(self.ambisonics_order)))            
+                for i, e in enumerate(annotation_event.data):
+                    audio_event_filename = e.value['event_id']+'.wav'
+                    #isolated_events_audio_path = [] 
+                    if e.value['role'] == 'background':
+                        # Concatenate background if necessary.
+                        source_duration = sf.info(e.value['source_file']).duration
+                        ntiles = int(
+                            max(self.duration // source_duration + 1, 1))
+
+                        # Create transformer
+                        tfm = sox.Transformer()
+                        # Ensure consistent sampling rate and channels
+                        # Need both a convert operation (to do the conversion),
+                        # and set_output_format (to have sox interpret the output
+                        # correctly).
+                        tfm.convert(
+                            samplerate=self.sr,
+                            n_channels=1, #=self.n_channels,
+                            bitdepth=None
+                        )
+                        tfm.set_output_format(
+                            rate=self.sr,
+                            channels=1 #self.n_channels
+                        )
+
+                        # PROCESS BEFORE COMPUTING LUFS
+                        tmpfiles_internal = []
+                        with _close_temp_files(tmpfiles_internal):
+                            # create internal tmpfile
+                            tmpfiles_internal.append(
+                                tempfile.NamedTemporaryFile(
+                                    suffix='.wav', delete=False))
+                            # read in background off disk, using start and stop 
+                            # to only read the necessary audio
+                            event_sr = sf.info(e.value['source_file']).samplerate
+                            start = int(e.value['source_time'] * event_sr)
+                            stop = int((e.value['source_time'] + e.value['event_duration']) * event_sr)
+                            event_audio, event_sr = sf.read(
+                                e.value['source_file'], always_2d=True,
+                                start=start, stop=stop)
+                            # tile the background along the appropriate dimensions
+                            event_audio = np.tile(event_audio, (ntiles, 1))
+                            event_audio = event_audio[:stop]
+                            event_audio = tfm.build_array(
+                                input_array=event_audio,
+                                sample_rate_in=event_sr
+                            )
+                            event_audio = event_audio.reshape(-1, 1)
+                            # NOW compute LUFS
+                            bg_lufs = get_integrated_lufs(event_audio, self.sr)
+
+                            # Normalize background to reference DB.
+                            gain = self.ref_db - bg_lufs
+                            event_audio = np.exp(gain * np.log(10) / 20) * event_audio
+
+                            event_audio_list.append(event_audio[:duration_in_samples])
+                            if save_isolated_events == True:
+                                preprocessed_files.append(os.path.join(destination_source_path, audio_event_filename))                            
+                                sf.write(preprocessed_files[-1], event_audio_list[-1], self.sr)
+                            if not annotation_reverb:
+                            # Apply just maximum spread (W gain is 1 in SN3D)
+                                input_volumes = get_ambisonics_spread_coefs(
+                                1.0,
+                                self.ambisonics_spread_slope,
+                                self.ambisonics_order)
+                                
+                                temp = event_audio_list[-1] * input_volumes
+                                mix += temp
+
+                                processed_tmpfiles.append(
+                                    tempfile.NamedTemporaryFile(
+                                    suffix='.wav', delete=False))
+                                sf.write(processed_tmpfiles[-1].name, temp, self.sr)
+
+                    elif e.value['role'] == 'foreground':
+                        # Create transformer
+                        tfm = sox.Transformer()
+                        # Ensure consistent sampling rate and channels
+                        # Need both a convert operation (to do the conversion),
+                        # and set_output_format (to have sox interpret the output
+                        # correctly).
+                        tfm.convert(
+                            samplerate=self.sr,
+                            n_channels=1, #self.n_channels,
+                            bitdepth=None
+                        )
+                        tfm.set_output_format(
+                            rate=self.sr,
+                            channels=1 #self.n_channels
+                        )
+                        # https://digitalcardboard.com/blog/2009/08/25/the-sox-of-silence/
+                        #tfm.silence(
+                        #        location=0, 
+                        #        silence_threshold=0.1, 
+                        #        min_silence_duration=0.1,
+                        #        buffer_around_silence=False
+                        #        )
+
+                        # Pitch shift
+                        if e.value['pitch_shift'] is not None:
+                            #print('Applying pitch shift of {} cents'.format(e.value['pitch_shift']))
+                            tfm.pitch(e.value['pitch_shift'], quick=quick_pitch_time)
+
+                        # Time stretch
+                        if e.value['time_stretch'] is not None:
+                            factor = 1.0 / float(e.value['time_stretch'])
+                            #print('Applying time stretch of factor {}'.format(factor))
+                            tfm.tempo(factor, audio_type='s', quick=quick_pitch_time)
+
+                        # PROCESS BEFORE COMPUTING LUFS
+                        tmpfiles_internal = []
+                        with _close_temp_files(tmpfiles_internal):
+                            # create internal tmpfile
+                            tmpfiles_internal.append(
+                                tempfile.NamedTemporaryFile(
+                                    suffix='.wav', delete=False))
+                            
+                            # synthesize edited foreground sound event, 
+                            # doing the trim via soundfile
+                            event_sr = sf.info(e.value['source_file']).samplerate
+                            start = int(e.value['source_time'] * event_sr)
+                            stop = int((e.value['source_time'] + e.value['event_duration']) * event_sr)
+                            event_audio, event_sr = sf.read(
+                                e.value['source_file'], always_2d=True,
+                                start=start, stop=stop)
+                            
+                            event_audio = tfm.build_array(
+                                input_array=event_audio,
+                                sample_rate_in=event_sr
+                            )
+                            #event_audio = event_audio.reshape(-1, self.n_channels)
+                            event_audio = event_audio.reshape(-1, 1)
+                            
+                            # NOW compute LUFS
+                            fg_lufs = get_integrated_lufs(event_audio, self.sr)
+
+                            # Normalize to specified SNR with respect to background
+                            gain = self.ref_db + e.value['snr'] - fg_lufs
+                            event_audio = np.exp(gain * np.log(10) / 20) * event_audio
+
+                            # Apply short fade in and out
+                            # (avoid unnatural sound onsets/offsets)
+                            if self.fade_in_len > 0:
+                                fade_in_samples =  int(self.fade_in_len * self.sr)
+                                fade_in_window = np.sin(np.linspace(0, np.pi / 2, fade_in_samples))[..., None]
+                                event_audio[:fade_in_samples] *= fade_in_window
+
+                            if self.fade_out_len > 0:
+                                fade_out_samples = int(self.fade_out_len * self.sr)
+                                fade_out_window = np.sin(np.linspace(np.pi / 2, 0, fade_out_samples))[..., None]
+                                event_audio[-fade_out_samples:] *= fade_out_window
+
+                            # Pad with silence before/after event to match the
+                            # soundscape duration
+                            prepad = int(self.sr * e.value['event_time'])
+                            postpad = max(0, duration_in_samples - (event_audio.shape[0] + prepad))
+                            event_audio = np.pad(event_audio, ((prepad, postpad), (0, 0)), 
+                                mode='constant', constant_values=(0, 0))
+                            #event_audio = event_audio[:duration_in_samples]                            
+                            event_audio_list.append(event_audio[:duration_in_samples])                            
+
+                            if save_isolated_events == True:
+                                preprocessed_files.append(os.path.join(destination_source_path, audio_event_filename))                            
+                                sf.write(preprocessed_files[-1], event_audio_list[-1], self.sr)
+                            if not annotation_reverb:
+                                # if foreground, apply both ambi coefs and spread
+                                input_volumes = get_ambisonics_coefs(e.value['event_azimuth'],
+                                                            e.value['event_elevation'],
+                                                            self.ambisonics_order)
+                                input_volumes *= get_ambisonics_spread_coefs(
+                                    e.value['event_spread'],
+                                    self.ambisonics_spread_slope,
+                                    self.ambisonics_order)
+                                
+                                temp = event_audio_list[-1] * input_volumes
+                                mix += temp
+                                #processed_tmpfiles.append(
+                                #    tempfile.NamedTemporaryFile(
+                                #    suffix='.wav', delete=False))                                
+                                #sf.write(processed_tmpfiles[-1].name, temp, self.sr)                                
+                                
+                            else:
+                                print("Rerverb processing not implemented in new method yet.")
+                                                                                                    
+                    
             
-            event_audio_list = []     
-            quick_pitch_time = False #ADDME to input args      
-            old_method = False
-            duration_in_samples = int(self.duration * self.sr)   
-            mix = np.zeros((duration_in_samples, get_number_of_ambisonics_channels(self.ambisonics_order)))
-                     
-            for i, e in enumerate(annotation_event.data):
-                audio_event_filename = e.value['event_id']+'.wav'
-                isolated_events_audio_path = [] 
-                                 
-                
-                if old_method==True: # old method                    
+                # Check for clipping and fix [optional]                
+                max_sample = np.max(np.abs(mix[:, 0])) # check W channel only
+                clipping = max_sample > (10 ** (peak_db / 20.0))
+                #if clipping:
+                #    warnings.warn('Soundscape audio is clipping!', AmbiScaperWarning)
+
+                if peak_normalization or (clipping and fix_clipping):
+
+                    # normalize soundscape audio and scale event audio
+                    mix, scale_factor = peak_normalize_ambi(mix, peak_db=peak_db)
+                    ref_db_change = 20 * np.log10(scale_factor)
+
+                    if clipping and fix_clipping:
+                        warnings.warn(
+                            'Peak normalization applied to fix clipping with '
+                            'scale factor = {}. The actual ref_db of the '
+                            'generated soundscape audio will change by '
+                            'approximately {:.2f}dB with respect to the target '
+                            'ref_db of {})'.format(
+                                scale_factor, ref_db_change, self.ref_db),
+                            AmbiScaperWarning)
+
+                    if scale_factor < 0.05:
+                        warnings.warn(
+                            'Scale factor for peak normalization is extreme '
+                            '(<0.05), event SNR values in the generated soundscape '
+                            'audio may not perfectly match their specified values.',
+                            AmbiScaperWarning
+                        )
+                # Optionally save soundscape audio to disk
+                if destination_path is not None:                    
+                    sf.write(os.path.join(destination_path, audio_filename), mix, self.sr)
+
+            else:  # old method
+                for i, e in enumerate(annotation_event.data):
+                    audio_event_filename = e.value['event_id']+'.wav'
+                    isolated_events_audio_path = [] 
+                                       
                     ir_filename = 'ir_'+audio_event_filename
 
                     # First of all, ensure pre-downmix to mono
@@ -2507,186 +2771,6 @@ class AmbiScaper:
                                         output_filepath=preprocessed_files[-1],
                                         extra_args=None,
                                         return_output=False)
-                
-                else: # new method       
-                    #for i, e in enumerate(ann.data):             
-                    if e.value['role'] == 'background':
-                        # Concatenate background if necessary.
-                        source_duration = sf.info(e.value['source_file']).duration
-                        ntiles = int(
-                            max(self.duration // source_duration + 1, 1))
-
-                        # Create transformer
-                        tfm = sox.Transformer()
-                        # Ensure consistent sampling rate and channels
-                        # Need both a convert operation (to do the conversion),
-                        # and set_output_format (to have sox interpret the output
-                        # correctly).
-                        tfm.convert(
-                            samplerate=self.sr,
-                            n_channels=1, #=self.n_channels,
-                            bitdepth=None
-                        )
-                        tfm.set_output_format(
-                            rate=self.sr,
-                            channels=1 #self.n_channels
-                        )
-
-                        # PROCESS BEFORE COMPUTING LUFS
-                        tmpfiles_internal = []
-                        with _close_temp_files(tmpfiles_internal):
-                            # create internal tmpfile
-                            tmpfiles_internal.append(
-                                tempfile.NamedTemporaryFile(
-                                    suffix='.wav', delete=False))
-                            # read in background off disk, using start and stop 
-                            # to only read the necessary audio
-                            event_sr = sf.info(e.value['source_file']).samplerate
-                            start = int(e.value['source_time'] * event_sr)
-                            stop = int((e.value['source_time'] + e.value['event_duration']) * event_sr)
-                            event_audio, event_sr = sf.read(
-                                e.value['source_file'], always_2d=True,
-                                start=start, stop=stop)
-                            # tile the background along the appropriate dimensions
-                            event_audio = np.tile(event_audio, (ntiles, 1))
-                            event_audio = event_audio[:stop]
-                            event_audio = tfm.build_array(
-                                input_array=event_audio,
-                                sample_rate_in=event_sr
-                            )
-                            event_audio = event_audio.reshape(-1, 1)
-                            # NOW compute LUFS
-                            bg_lufs = get_integrated_lufs(event_audio, self.sr)
-
-                            # Normalize background to reference DB.
-                            gain = self.ref_db - bg_lufs
-                            event_audio = np.exp(gain * np.log(10) / 20) * event_audio
-
-                            event_audio_list.append(event_audio[:duration_in_samples])
-                            preprocessed_files.append(os.path.join(destination_source_path, audio_event_filename))
-                            sf.write(preprocessed_files[-1],event_audio_list[-1],self.sr)
-                            if not annotation_reverb:
-                            # Apply just maximum spread (W gain is 1 in SN3D)
-                                input_volumes = get_ambisonics_spread_coefs(
-                                1.0,
-                                self.ambisonics_spread_slope,
-                                self.ambisonics_order)
-
-                                
-                                
-                                temp = event_audio_list[-1] * input_volumes
-                                mix += temp
-
-                                processed_tmpfiles.append(
-                                    tempfile.NamedTemporaryFile(
-                                    suffix='.wav', delete=False))
-                                sf.write(processed_tmpfiles[-1].name, temp, self.sr)
-
-                    elif e.value['role'] == 'foreground':
-                        # Create transformer
-                        tfm = sox.Transformer()
-                        # Ensure consistent sampling rate and channels
-                        # Need both a convert operation (to do the conversion),
-                        # and set_output_format (to have sox interpret the output
-                        # correctly).
-                        tfm.convert(
-                            samplerate=self.sr,
-                            n_channels=1, #self.n_channels,
-                            bitdepth=None
-                        )
-                        tfm.set_output_format(
-                            rate=self.sr,
-                            channels=1 #self.n_channels
-                        )
-
-                        # Pitch shift
-                        if e.value['pitch_shift'] is not None:
-                            #print('Applying pitch shift of {} cents'.format(e.value['pitch_shift']))
-                            tfm.pitch(e.value['pitch_shift'], quick=quick_pitch_time)
-
-                        # Time stretch
-                        if e.value['time_stretch'] is not None:
-                            factor = 1.0 / float(e.value['time_stretch'])
-                            #print('Applying time stretch of factor {}'.format(factor))
-                            tfm.tempo(factor, audio_type='s', quick=quick_pitch_time)
-
-                        # PROCESS BEFORE COMPUTING LUFS
-                        tmpfiles_internal = []
-                        with _close_temp_files(tmpfiles_internal):
-                            # create internal tmpfile
-                            tmpfiles_internal.append(
-                                tempfile.NamedTemporaryFile(
-                                    suffix='.wav', delete=False))
-                            
-                            # synthesize edited foreground sound event, 
-                            # doing the trim via soundfile
-                            event_sr = sf.info(e.value['source_file']).samplerate
-                            start = int(e.value['source_time'] * event_sr)
-                            stop = int((e.value['source_time'] + e.value['event_duration']) * event_sr)
-                            event_audio, event_sr = sf.read(
-                                e.value['source_file'], always_2d=True,
-                                start=start, stop=stop)
-                            
-                            event_audio = tfm.build_array(
-                                input_array=event_audio,
-                                sample_rate_in=event_sr
-                            )
-                            #event_audio = event_audio.reshape(-1, self.n_channels)
-                            event_audio = event_audio.reshape(-1, 1)
-                            
-                            # NOW compute LUFS
-                            fg_lufs = get_integrated_lufs(event_audio, self.sr)
-
-                            # Normalize to specified SNR with respect to
-                            # background
-                            gain = self.ref_db + e.value['snr'] - fg_lufs
-                            event_audio = np.exp(gain * np.log(10) / 20) * event_audio
-
-                            # Apply short fade in and out
-                            # (avoid unnatural sound onsets/offsets)
-                            if self.fade_in_len > 0:
-                                fade_in_samples =  int(self.fade_in_len * self.sr)
-                                fade_in_window = np.sin(np.linspace(0, np.pi / 2, fade_in_samples))[..., None]
-                                event_audio[:fade_in_samples] *= fade_in_window
-
-                            if self.fade_out_len > 0:
-                                fade_out_samples = int(self.fade_out_len * self.sr)
-                                fade_out_window = np.sin(np.linspace(np.pi / 2, 0, fade_out_samples))[..., None]
-                                event_audio[-fade_out_samples:] *= fade_out_window
-
-                            # Pad with silence before/after event to match the
-                            # soundscape duration
-                            prepad = int(self.sr * e.value['event_time'])
-                            postpad = max(0, duration_in_samples - (event_audio.shape[0] + prepad))
-                            event_audio = np.pad(event_audio, ((prepad, postpad), (0, 0)), 
-                                mode='constant', constant_values=(0, 0))
-                            event_audio = event_audio[:duration_in_samples]
-                            
-                            event_audio_list.append(event_audio[:duration_in_samples])
-
-                            preprocessed_files.append(os.path.join(destination_source_path, audio_event_filename))
-                            sf.write(preprocessed_files[-1], event_audio_list[-1], self.sr)
-                            if not annotation_reverb:
-                                # if foreground, apply both ambi coefs and spread
-                                input_volumes = get_ambisonics_coefs(e.value['event_azimuth'],
-                                                             e.value['event_elevation'],
-                                                             self.ambisonics_order)
-                                input_volumes *= get_ambisonics_spread_coefs(
-                                    e.value['event_spread'],
-                                    self.ambisonics_spread_slope,
-                                    self.ambisonics_order)
-                                
-                                temp = event_audio_list[-1] * input_volumes
-                                mix += temp
-                                #processed_tmpfiles.append(
-                                #    tempfile.NamedTemporaryFile(
-                                #    suffix='.wav', delete=False))                                
-                                #sf.write(processed_tmpfiles[-1].name, temp, self.sr)                                
-                                
-                            else:
-                                print("Rerverb processing not implemented in new method yet.")
-                                                                                                
-                if old_method==True:
                     # Create combiner
                     # note: Combiner inhereits from transformer,
                     # so we can still apply all audio transforms
@@ -2731,8 +2815,8 @@ class AmbiScaper:
                         if is_foreground(e):
                             # if foreground, apply both ambi coefs and spread
                             input_volumes = get_ambisonics_coefs(e.value['event_azimuth'],
-                                                             e.value['event_elevation'],
-                                                             self.ambisonics_order)
+                                                            e.value['event_elevation'],
+                                                            self.ambisonics_order)
                             input_volumes *= get_ambisonics_spread_coefs(
                                 e.value['event_spread'],
                                 self.ambisonics_spread_slope,
@@ -2752,9 +2836,9 @@ class AmbiScaper:
                         # Build by passing a list of duplicated downmixed files
                         # and 'merging' it with targed ambisonics gains and spreads (one for each channel)
                         fx_combiner.build(input_filepath_list=[preprocessed_files[-1] for _ in range(get_number_of_ambisonics_channels(self.ambisonics_order))],
-                                          output_filepath=processed_tmpfiles[-1].name,
-                                          combine_type='merge',
-                                          input_volumes=input_volumes.tolist())
+                                        output_filepath=processed_tmpfiles[-1].name,
+                                        combine_type='merge',
+                                        input_volumes=input_volumes.tolist())
 
 
                     # There is ambisonics reverb:
@@ -2867,9 +2951,9 @@ class AmbiScaper:
 
                         # Build padded_file in that ugly way with the volumes trick
                         fx_combiner.build(input_filepath_list=[preprocessed_files[-1],preprocessed_files[-1]],
-                                          output_filepath=padded_file.name,
-                                          combine_type='mix',
-                                          input_volumes=[1.0,0.0])
+                                        output_filepath=padded_file.name,
+                                        combine_type='mix',
+                                        input_volumes=[1.0,0.0])
                     #########
 
                         # Open the preprocessed file
@@ -2908,8 +2992,7 @@ class AmbiScaper:
 
                         # Don't forget to close paddedfile
                         padded_file.close()
-
-            if old_method==True:
+                
                 # Finally combine all the files and optionally apply reverb
                 # If we have more than one tempfile (i.e.g background + at
                 # least one foreground event, we need a combiner. If there's
@@ -2955,16 +3038,19 @@ class AmbiScaper:
                         os.remove(t.name)   # then remove the file
                     except PermissionError:
                         print(f"Could not delete {t.name}, file still in use.")                 
-            else:  #new method              
-                maxVal = np.max(abs(mix[:, 0]))
-                if maxVal > 0.86: #-1 dB
-                    # normalize entire ambi_data
-                    mix = mix / (maxVal * 1.15)
-                sf.write(os.path.join(destination_path, audio_filename), mix, self.sr)    
+            
+
+                    
 
     def generate(self,
                  destination_path,
                  allow_repeated_source=True,
+                 reverb=None,
+                 fix_clipping=False,
+                 peak_normalization=False,
+                 quick_pitch_time=False,
+                 save_isolated_events=False,
+                 isolated_events_path=None,
                  disable_sox_warnings=True,
                  no_audio=False,
                  generate_txt=False,
@@ -2974,8 +3060,14 @@ class AmbiScaper:
 
         :param destination_path:
         :param allow_repeated_source:
+        :param reverb: TODO
+        :param fix_clipping:
+        :param peak_normalization:
+        :param quick_pitch_time:
+        :param save_isolated_events: TODO
+        :param isolated_events_path: TODO
         :param disable_sox_warnings:
-        :param no_audio:
+        :param no_audio: 
         :param generate_txt:
         :param txt_sep:
         :param disable_instantiation_warnings:
@@ -3029,6 +3121,12 @@ class AmbiScaper:
             self._generate_audio(destination_path,
                                  filename + '.wav',
                                  annotation_array,
+                                 reverb=reverb,
+                                 fix_clipping=fix_clipping,
+                                 peak_normalization=peak_normalization,
+                                 quick_pitch_time=quick_pitch_time,
+                                 save_isolated_events=save_isolated_events,
+                                 isolated_events_path=isolated_events_path,                                    
                                  disable_sox_warnings=disable_sox_warnings)
             # ambi_data, ambi_sample_rate = sf.read(os.path.join(destination_path, filename))
             #
