@@ -11,7 +11,7 @@ try:
     import soxbindings as sox
 except: # pragma: no cover
     import sox # pragma: no cover
-import sox as pysox # needed for combiner()
+import sox as pysox # needed for combiner() in old method
 import random
 import os
 import warnings
@@ -2463,7 +2463,7 @@ class AmbiScaper:
             # Iterate over all events specified in the event annotation
             # fg_event_idx = -1 TODO   
 
-            old_method = True
+            old_method = False
             if old_method==False: # new method                    
                 event_audio_list = []                 
                 duration_in_samples = int(self.duration * self.sr)   
@@ -2597,8 +2597,7 @@ class AmbiScaper:
                             event_audio = tfm.build_array(
                                 input_array=event_audio,
                                 sample_rate_in=event_sr
-                            )
-                            #event_audio = event_audio.reshape(-1, self.n_channels)
+                            )                            
                             event_audio = event_audio.reshape(-1, 1)
                             
                             # NOW compute LUFS
@@ -2625,8 +2624,7 @@ class AmbiScaper:
                             prepad = int(self.sr * e.value['event_time'])
                             postpad = max(0, duration_in_samples - (event_audio.shape[0] + prepad))
                             event_audio = np.pad(event_audio, ((prepad, postpad), (0, 0)), 
-                                mode='constant', constant_values=(0, 0))
-                            #event_audio = event_audio[:duration_in_samples]                            
+                                mode='constant', constant_values=(0, 0))                                                        
                             event_audio_list.append(event_audio[:duration_in_samples])                            
 
                             if save_isolated_events == True:
@@ -2656,12 +2654,17 @@ class AmbiScaper:
             
                 # Check for clipping and fix [optional]                
                 max_sample = np.max(np.abs(mix[:, 0])) # check W channel only
+                
+                if 0: # to better align with old method, TODO: remove later
+                    if max_sample > 0.86: #-1 dB 
+                    # normalize entire ambi_data
+                        mix = mix / (max_sample * 1.15)                   
+
                 clipping = max_sample > (10 ** (peak_db / 20.0))
                 #if clipping:
                 #    warnings.warn('Soundscape audio is clipping!', AmbiScaperWarning)
 
                 if peak_normalization or (clipping and fix_clipping):
-
                     # normalize soundscape audio and scale event audio
                     mix, scale_factor = peak_normalize_ambi(mix, peak_db=peak_db)
                     ref_db_change = 20 * np.log10(scale_factor)
@@ -2684,15 +2687,16 @@ class AmbiScaper:
                             AmbiScaperWarning
                         )
                 # Optionally save soundscape audio to disk
-                if destination_path is not None:                    
+                if destination_path is not None:                                        
                     sf.write(os.path.join(destination_path, audio_filename), mix, self.sr)
 
             else:  # old method
+                    # Iterate over all events specified in the event annotation
+                # fg_event_idx = -1 TODO            
                 for i, e in enumerate(annotation_event.data):
                     audio_event_filename = e.value['event_id']+'.wav'
-                    isolated_events_audio_path = [] 
-                                       
                     ir_filename = 'ir_'+audio_event_filename
+
 
                     # First of all, ensure pre-downmix to mono
                     downmix_tmpfiles.append(
@@ -2713,12 +2717,10 @@ class AmbiScaper:
                     if is_foreground(e):
                         # Pitch shift
                         if e.value['pitch_shift'] is not None:
-                            #print('Applying pitch shift of {}'.format(e.value['pitch_shift']))
                             fx_transformer.pitch(e.value['pitch_shift'])
 
                         # Time stretch
                         if e.value['time_stretch'] is not None:
-                            #print('Applying time stretch of factor {}'.format(1.0 / float(e.value['time_stretch'])))
                             fx_transformer.tempo(1.0 / float(e.value['time_stretch']))
 
                             # Apply very short fade in and out
@@ -2729,10 +2731,45 @@ class AmbiScaper:
                     # Normalize to specified SNR with respect to
                     # self.ref_db (from downmixed version)
                     lufs = get_integrated_lufs_old(downmix_tmpfiles[-1].name)
-                    
                     if is_foreground(e):
                         gain = self.ref_db + e.value['snr'] - lufs
+                    elif is_background(e):
 
+                        gain = self.ref_db - lufs
+                    else:
+                        raise AmbiScaperError(
+                            'Unsupported event role: {:s}'.format(
+                                e.value['role']))
+                    fx_transformer.gain(gain_db=gain, normalize=False)
+
+                    # Here we got the final mono file with transformations
+                    # but before time padding and ambisonics transformation
+                    # So this is the signal we should save for the separation validation
+                    # (which can be found in this loop as "preprocessed_files[-1]")
+
+                    preprocessed_files.append(
+                        os.path.join(destination_source_path, audio_event_filename))
+
+                    # Build
+                    fx_transformer.build(input_filepath=downmix_tmpfiles[-1].name,
+                                        output_filepath=preprocessed_files[-1],
+                                        extra_args=None,
+                                        return_output=False)
+
+                    # Create combiner
+                    # note: Combiner inhereits from transformer,
+                    # so we can still apply all audio transforms
+                    # note2: we cannot use a plain Transformer,
+                    # because volume controls are still not implemented
+                    # on the remix method
+                    fx_combiner = pysox.Combiner()
+                    fx_combiner.convert(samplerate=self.sr,
+                                        n_channels=get_number_of_ambisonics_channels(self.ambisonics_order),  # num_ambisonics_channels
+                                        bitdepth=None)
+
+                    # Pad with silence before/after event to match the
+                    # soundscape duration
+                    if is_foreground(e):
                         prepad = e.value['event_time']
                         if e.value['time_stretch'] is None:
                             postpad = max(
@@ -2743,80 +2780,26 @@ class AmbiScaper:
                                 0, self.duration - (e.value['event_time'] +
                                                     e.value['event_duration'] *
                                                     e.value['time_stretch']))
-                        fx_transformer.pad(prepad, postpad)
+                        fx_combiner.pad(prepad, postpad)
 
-                    elif is_background(e):
+                    # Ambisonics
+                    #
+                    # Two main methods of operation here:
+                    # 1.)   If there is no reverb, then compute the ambisonics encoding for each source
+                    #       and combine them together.
+                    #       That should be equivalent to convolving with deltas,
+                    #       so maybe in the future we implement it in that way to make it more consistent
+                    # 2.)   If there is reverb, then compute or retrieve the IRs according to the source positions,
+                    #       and then convolve them with the sources
 
-                        gain = self.ref_db - lufs
-                    else:
-                        raise AmbiScaperError(
-                            'Unsupported event role: {:s}'.format(
-                                e.value['role']))
-                    fx_transformer.gain(gain_db=gain, normalize=False)
-
-                # Here we got the final mono file with transformations
-                # but before time padding and ambisonics transformation
-                # So this is the signal we should save for the separation validation
-                # (which can be found in this loop as "preprocessed_files[-1]")
-
-                                # Pad with silence before/after event to match the
-                # soundscape duration               
-                    
-
-                    preprocessed_files.append(
-                        os.path.join(destination_source_path, audio_event_filename))
-
-                    # Build
-                    fx_transformer.build(input_filepath=downmix_tmpfiles[-1].name,
-                                        output_filepath=preprocessed_files[-1],
-                                        extra_args=None,
-                                        return_output=False)
-                    # Create combiner
-                    # note: Combiner inhereits from transformer,
-                    # so we can still apply all audio transforms
-                    # note2: we cannot use a plain Transformer,
-                    # because volume controls are still not implemented
-                    # on the remix method
-                    fx_combiner = pysox.Combiner()
-                    fx_combiner.convert(samplerate=self.sr,
-                                    n_channels=get_number_of_ambisonics_channels(self.ambisonics_order),  # num_ambisonics_channels
-                                    bitdepth=None)
-
-                # Pad with silence before/after event to match the
-                # soundscape duration
-                #if is_foreground(e):
-
-                #    prepad = e.value['event_time']
-                #    if e.value['time_stretch'] is None:
-                #        postpad = max(
-                #            0, self.duration - (e.value['event_time'] +
-                #                                e.value['event_duration']))
-                #    else:
-                #        postpad = max(
-                #            0, self.duration - (e.value['event_time'] +
-                #                                e.value['event_duration'] *
-                #                                e.value['time_stretch']))
-                #    fx_combiner.pad(prepad, postpad)
-
-
-                # Ambisonics
-                #
-                # Two main methods of operation here:
-                # 1.)   If there is no reverb, then compute the ambisonics encoding for each source
-                #       and combine them together.
-                #       That should be equivalent to convolving with deltas,
-                #       so maybe in the future we implement it in that way to make it more consistent
-                # 2.)   If there is reverb, then compute or retrieve the IRs according to the source positions,
-                #       and then convolve them with the sources
-
-                # If we DON'T have reverb...
+                    # If we DON'T have reverb...
                     if not annotation_reverb:
 
                         if is_foreground(e):
                             # if foreground, apply both ambi coefs and spread
                             input_volumes = get_ambisonics_coefs(e.value['event_azimuth'],
-                                                            e.value['event_elevation'],
-                                                            self.ambisonics_order)
+                                                                e.value['event_elevation'],
+                                                                self.ambisonics_order)
                             input_volumes *= get_ambisonics_spread_coefs(
                                 e.value['event_spread'],
                                 self.ambisonics_spread_slope,
@@ -2954,7 +2937,7 @@ class AmbiScaper:
                                         output_filepath=padded_file.name,
                                         combine_type='mix',
                                         input_volumes=[1.0,0.0])
-                    #########
+                        #########
 
                         # Open the preprocessed file
                         file_data, file_sample_rate = sf.read(padded_file)
@@ -2992,7 +2975,8 @@ class AmbiScaper:
 
                         # Don't forget to close paddedfile
                         padded_file.close()
-                
+
+
                 # Finally combine all the files and optionally apply reverb
                 # If we have more than one tempfile (i.e.g background + at
                 # least one foreground event, we need a combiner. If there's
@@ -3016,8 +3000,9 @@ class AmbiScaper:
                     final_combiner.build([t.name for t in processed_tmpfiles],
                                         os.path.join(destination_path, audio_filename),
                                         'mix')
-            
+
                 ambi_data, ambi_sample_rate = sf.read(os.path.join(destination_path, audio_filename))
+
                 maxVal = np.max(abs(ambi_data[:, 0]))
                 if maxVal > 0.86: #-1 dB
                     # normalize entire ambi_data
@@ -3037,7 +3022,7 @@ class AmbiScaper:
                         t.close()           # close the file handle
                         os.remove(t.name)   # then remove the file
                     except PermissionError:
-                        print(f"Could not delete {t.name}, file still in use.")                 
+                        print(f"Could not delete {t.name}, file still in use.") 
             
 
                     
