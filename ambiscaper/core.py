@@ -2503,8 +2503,8 @@ class AmbiScaper:
                             # read in background off disk, using start and stop 
                             # to only read the necessary audio
                             event_sr = sf.info(e.value['source_file']).samplerate
-                            start = int(e.value['source_time'] * event_sr)
-                            stop = int((e.value['source_time'] + e.value['event_duration']) * event_sr)
+                            start = int(e.value['source_time'] * event_sr + 1) #TODO: +1 to align with old method, remove later
+                            stop = int((e.value['source_time'] + e.value['event_duration']) * event_sr + 1)
                             event_audio, event_sr = sf.read(
                                 e.value['source_file'], always_2d=True,
                                 start=start, stop=stop)
@@ -2588,8 +2588,8 @@ class AmbiScaper:
                             # synthesize edited foreground sound event, 
                             # doing the trim via soundfile
                             event_sr = sf.info(e.value['source_file']).samplerate
-                            start = int(e.value['source_time'] * event_sr)
-                            stop = int((e.value['source_time'] + e.value['event_duration']) * event_sr)
+                            start = int(e.value['source_time'] * event_sr + 1) #TODO: +1 to align with old method, remove later
+                            stop = int((e.value['source_time'] + e.value['event_duration']) * event_sr + 1)
                             event_audio, event_sr = sf.read(
                                 e.value['source_file'], always_2d=True,
                                 start=start, stop=stop)
