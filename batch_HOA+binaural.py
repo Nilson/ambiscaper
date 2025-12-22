@@ -96,7 +96,7 @@ for scene_idx in range(num_scenes):
 
     ### Generate the audio and the annotation
     ambiscaper.generate(destination_path=destination_path,
-                        fix_clipping=False,
+                        fix_clipping=True,
                         peak_normalization=False,
                         generate_txt=True,
                         allow_repeated_source=True,
