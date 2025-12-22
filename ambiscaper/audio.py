@@ -105,3 +105,71 @@ def get_integrated_lufs(audio_array, samplerate, min_duration=0.5,
     # silent audio gives -inf, so need to put a lower bound.
     loudness = max(loudness, -70) 
     return loudness
+
+def peak_normalize(soundscape_audio, event_audio_list, peak_db=0.0):
+    """
+    Compute the scale factor required to peak normalize the audio such that
+    max(abs(soundscape_audio)) = 1 (in case of peak_db=0).
+
+    Parameters
+    ----------
+    soundscape_audio : np.ndarray
+        The soundscape audio.
+    event_audio_list : list
+        List of np.ndarrays containing the audio samples of each isolated
+        foreground event.
+    peak_db: float
+        The target peak level in dBFS. Default is 0 dBFS.
+
+    Returns
+    -------
+    scaled_soundscape_audio : np.ndarray
+        The peak normalized soundscape audio.
+    scaled_event_audio_list : list
+        List of np.ndarrays containing the scaled audio samples of
+        each isolated foreground event. All events are scaled by scale_factor.
+    scale_factor : float
+        The scale factor used to peak normalize the soundscape audio.
+    """
+    eps = 1e-10
+    target_peak = 10 ** (peak_db / 20.0)
+    max_sample = np.max(np.abs(soundscape_audio))
+    scale_factor = target_peak / (max_sample + eps)
+
+    # scale the event audio and the soundscape audio:
+    scaled_soundscape_audio = soundscape_audio * scale_factor
+
+    scaled_event_audio_list = []
+    for event_audio in event_audio_list:
+        scaled_event_audio_list.append(event_audio * scale_factor)
+
+    return scaled_soundscape_audio, scaled_event_audio_list, scale_factor
+
+def peak_normalize_ambi(soundscape_audio, peak_db=0.0):
+    """
+    Compute the scale factor required to peak normalize the ambisonics signal such that the W channel is peaknormalized.
+    i.e., max(abs(soundscape_audio[:, 0])) = 1.0.
+
+    Parameters
+    ----------
+    soundscape_audio : np.ndarray
+        The ambisonics soundscape audio.    
+    peak_db: float
+        The target peak level in dBFS. Default is 0 dBFS.
+
+    Returns
+    -------
+    scaled_soundscape_audio : np.ndarray
+        The peak normalized soundscape audio.    
+    scale_factor : float
+        The scale factor used to peak normalize the soundscape audio.
+    """
+    eps = 1e-10
+    target_peak = 10 ** (peak_db / 20.0)
+    max_sample = np.max(np.abs(soundscape_audio[:, 0]))
+    scale_factor = target_peak  / (max_sample + eps)
+
+    # scale the soundscape audio:
+    scaled_soundscape_audio = soundscape_audio * scale_factor
+
+    return scaled_soundscape_audio, scale_factor    
