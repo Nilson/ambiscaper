@@ -13,6 +13,7 @@ import random
 from random import choice
 #from pedalboard import Pedalboard, Reverb, load_plugin
 import time
+import spaudiopy as spa
 
 random.seed(42)
 np.random.seed(42)
@@ -23,6 +24,8 @@ num_scenes = 20 # number of audio scenes
 num_events = 10 # number of audio events per scene
 
 ambisonics_order = 5
+yawRotationOnly = True  # if True, only yaw rotation is applied, pitch and roll are fixed to zero
+
 numAmbiCoef = (ambisonics_order+1)*(ambisonics_order+1)
 hrtf_folder = os.path.join(os. getcwd(),'./HRTF/')
 hrtf_data, hrtf_sample_rate = sf.read(hrtf_folder + "/sh_hrir_order_" + str(ambisonics_order) + ".wav")
@@ -168,52 +171,68 @@ for scene_idx in range(num_scenes):
     #output_signal = np.zeros((ambi_data_rot.shape[0]+hrtf_data.shape[0]-1,numChans))
     output_signal = np.zeros((output_file_duration_samples + hrtf_data.shape[0] - 1, numChans))
     min_length = min(len(ambi_data), len(ht_data_trunc))
-    for i in np.arange(0, min_length-1, frame_length).tolist():
-        yaw = (ht_data_trunc[i, 0] * np.pi)
-        # print(yaw_deg)
-        # yaw = yaw_deg*(np.pi/180.0)
-        if ambisonics_order>0:
-            cosYaw = np.cos(yaw)
-            sinYaw = np.sin(yaw)
-            mtx[1,1] = cosYaw
-            mtx[3,3] = cosYaw
-            mtx[1,3] = sinYaw
-            mtx[3,1] = -sinYaw
-        if ambisonics_order>1:
-            cos2Yaw = np.cos(2*yaw)
-            sin2Yaw = np.sin(2*yaw)
-            mtx[4,4] = cos2Yaw
-            mtx[8,8] = cos2Yaw
-            mtx[4,8] = sin2Yaw
-            mtx[8,4] = -sin2Yaw
-            mtx[5:8,5:8] = mtx[1:4,1:4]
-        if ambisonics_order>2:
-            cos3Yaw = np.cos(3*yaw)
-            sin3Yaw = np.sin(3*yaw)
-            mtx[9,9] = cos3Yaw
-            mtx[15,15] = cos3Yaw
-            mtx[ 9,15] = sin3Yaw
-            mtx[15, 9] = -sin3Yaw
-            mtx[10:15,10:15] = mtx[4:9,4:9]
-        if ambisonics_order>3:
-            cos4Yaw = np.cos(4*yaw)
-            sin4Yaw = np.sin(4*yaw)
-            mtx[16,16] = cos4Yaw
-            mtx[24,24] = cos4Yaw
-            mtx[16,24] = sin4Yaw
-            mtx[24,16] = -sin4Yaw
-            mtx[17:24,17:24] = mtx[9:16,9:16]
-        if ambisonics_order>4:
-            mtx[25,25] =  np.cos(5*yaw)
-            mtx[35,35] =  mtx[25,25]
-            mtx[25,35] =  np.sin(5*yaw)
-            mtx[35,25] =  -mtx[25,35]
-            mtx[26:35,26:35] = mtx[16:25,16:25]
-
-        ambi_data_rot[i:i+frame_length,:] = np.matmul(ambi_data[i:i+frame_length,:], mtx)
-        output_signal[i:i+frame_length,2] = yaw/np.pi
-    ambi_data_rot[i + frame_length+1:len(ambi_data)-1, :] = np.matmul(ambi_data[i + frame_length+1:len(ambi_data)-1, :], mtx)
+    
+    yaw, pitch, roll = 0, 0, 0
+    if yawRotationOnly == False:
+        for i in np.arange(0, min_length-1, frame_length).tolist():        
+            yaw = ht_data_trunc[i, 0] * np.pi
+            pitch = ht_data_trunc[i, 1] * np.pi
+            roll = ht_data_trunc[i, 2] * np.pi 
+            output_signal[i:i+frame_length,2] = ht_data_trunc[i, 0]                               
+            output_signal[i:i+frame_length,3] = ht_data_trunc[i, 1]            
+            output_signal[i:i+frame_length,4] = ht_data_trunc[i, 2]
+            mtx = spa.sph.sh_rotation_matrix(ambisonics_order, yaw, pitch, roll, sh_type='real').T  
+            ambi_data_rot[i:i+frame_length,:] = ambi_data[i:i+frame_length,:] @ mtx       
+            # TODO: fade with overlap-add to avoid occasional zipper noise artifacts at frame boundaries      
+    else: #yaw rotation only, much faster to compute mtx   
+        for i in np.arange(0, min_length-1, frame_length).tolist():   
+            yaw = ht_data_trunc[i, 0] * np.pi  
+            output_signal[i:i+frame_length,2] = ht_data_trunc[i, 0]                                        
+            if ambisonics_order>0:
+                cosYaw = np.cos(yaw)
+                sinYaw = np.sin(yaw)
+                mtx[1,1] = cosYaw
+                mtx[3,3] = cosYaw
+                mtx[1,3] = sinYaw
+                mtx[3,1] = -sinYaw
+            if ambisonics_order>1:
+                cos2Yaw = np.cos(2*yaw)
+                sin2Yaw = np.sin(2*yaw)
+                mtx[4,4] = cos2Yaw
+                mtx[8,8] = cos2Yaw
+                mtx[4,8] = sin2Yaw
+                mtx[8,4] = -sin2Yaw
+                mtx[5:8,5:8] = mtx[1:4,1:4]
+            if ambisonics_order>2:
+                cos3Yaw = np.cos(3*yaw)
+                sin3Yaw = np.sin(3*yaw)
+                mtx[9,9] = cos3Yaw
+                mtx[15,15] = cos3Yaw
+                mtx[ 9,15] = sin3Yaw
+                mtx[15, 9] = -sin3Yaw
+                mtx[10:15,10:15] = mtx[4:9,4:9]
+            if ambisonics_order>3:
+                cos4Yaw = np.cos(4*yaw)
+                sin4Yaw = np.sin(4*yaw)
+                mtx[16,16] = cos4Yaw
+                mtx[24,24] = cos4Yaw
+                mtx[16,24] = sin4Yaw
+                mtx[24,16] = -sin4Yaw
+                mtx[17:24,17:24] = mtx[9:16,9:16]
+            if ambisonics_order>4:
+                mtx[25,25] =  np.cos(5*yaw)
+                mtx[35,35] =  mtx[25,25]
+                mtx[25,35] =  np.sin(5*yaw)
+                mtx[35,25] =  -mtx[25,35]
+                mtx[26:35,26:35] = mtx[16:25,16:25]
+            ambi_data_rot[i:i+frame_length,:] = ambi_data[i:i+frame_length,:] @ mtx                
+            # TODO: fade with overlap-add to avoid occasional zipper noise artifacts at frame boundaries
+        
+    # process the remaining samples   
+    ambi_data_rot[i + frame_length+1:len(ambi_data)-1, :] = ambi_data[i + frame_length+1:len(ambi_data)-1, :] @ mtx
     output_signal[i + frame_length+1:len(output_signal)-1, 2] = yaw / np.pi
+    output_signal[i + frame_length+1:len(output_signal)-1, 3] = pitch / np.pi
+    output_signal[i + frame_length+1:len(output_signal)-1, 4] = roll / np.pi
 
     maxVal_W_rot = max(abs(ambi_data_rot[:, 0]))
     if maxVal_W_rot > 0.99:
