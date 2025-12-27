@@ -6,6 +6,9 @@ Ambiscaper core methods
 
 
 import soundfile as sf
+import subprocess
+import resampy
+import spaudiopy as spa
 import scipy.signal
 try:
     import soxbindings as sox
@@ -33,7 +36,7 @@ from .util import _validate_folder_path
 from .util import max_polyphony
 from .util import polyphony_gini
 from .util import is_real_number, is_real_array
-from .audio import get_integrated_lufs_old, get_integrated_lufs, peak_normalize_ambi
+from .audio import get_integrated_lufs_old, get_integrated_lufs, peak_normalize_ambi, get_wavpack_duration, get_wavpack_channelCount, get_wavpack_sampleRate
 from .ambisonics import get_number_of_ambisonics_channels, change_channel_ordering_fuma_2_acn, change_normalization_fuma_2_sn3d
 from .ambisonics import _validate_ambisonics_order
 from .ambisonics import get_ambisonics_spread_coefs
@@ -68,7 +71,7 @@ EventSpec = namedtuple(
     ['source_file', 'event_id',
      'source_time', 'event_time', 'event_duration',
      'event_azimuth', 'event_elevation', 'event_spread',
-     'snr', 'role', 'pitch_shift', 'time_stretch'])
+     'snr', 'role', 'pitch_shift', 'time_stretch', 'is_hoa'])
 '''
 Container for storing event specifications, either probabilistic (i.e. using
 distribution tuples to specify possible values) or instantiated (i.e. storing
@@ -958,7 +961,7 @@ class AmbiScaper:
             self.matlab_available = False
 
 
-    def add_background(self, source_file, source_time):
+    def add_background(self, source_file, source_time=('const', 0), event_azimuth=("const", 0), event_elevation=("const", 0)):
         '''
         Add a background recording to the background specification.
 
@@ -1022,13 +1025,14 @@ class AmbiScaper:
         # These values are fixed for the background sound
         event_time = ("const", 0)
         event_duration = ("const", self.duration)
-        event_azimuth = ("const", 0)
-        event_elevation = ("const", 0)
+        #event_azimuth = ("const", 0)
+        #event_elevation = ("const", 0)
         event_spread = ("const", 0)
         snr = ("const", 0)
         role = 'background'
         pitch_shift = None
         time_stretch = None
+        is_hoa = False # is content already in HOA forrmat? 
 
         # Validate parameter format and values
         # _validate_event(source_file,
@@ -1048,7 +1052,8 @@ class AmbiScaper:
                              role=role,
                              event_id=None,  # does not matter now, only on instanciated values
                              pitch_shift=pitch_shift,
-                             time_stretch=time_stretch)
+                             time_stretch=time_stretch,
+                             is_hoa=is_hoa)
 
         # Add event to background spec
         self.bg_spec.append(bg_event)
@@ -1168,7 +1173,8 @@ class AmbiScaper:
                           role='foreground',
                           event_id = None, # does not matter now, only on instanciated values
                           pitch_shift=pitch_shift,
-                          time_stretch=time_stretch)
+                          time_stretch=time_stretch,
+                          is_hoa=False)
 
         # Add event to foreground specification
         self.fg_spec.append(event)
@@ -1335,7 +1341,7 @@ class AmbiScaper:
             Therefore, the ``wrap`` parameter allows the user to specify how this mapping should be performed.
             At the moment there are the following possibilities for the ``wrap`` parameter:
             -   'random':       The event spec values for azimuth and elevation will be ommited, and
-                    the system will create new positions ramdomly from the available IR positions
+                    the system will create new positions randomly from the available IR positions
             -   'wrap_azimuth': Events will be placed at the closest available position, considering only
                     angular distance in azimuth
             -   'wrap_elevation': Events will be placed at the closest available position, considering only
@@ -1472,8 +1478,21 @@ class AmbiScaper:
         # Get the duration of the source audio file
         # It must use the expanded source file name
         source_file_path = os.path.abspath(source_file)
+        source_file_extension = os.path.splitext(source_file_path)[1].lower()
         #source_duration = sox.file_info.duration(source_file_path)
-        source_duration = sf.info(source_file_path).duration
+        is_hoa = False
+        if source_file_extension != '.wv':
+            source_duration = sf.info(source_file_path).duration
+            num_channels = sf.info(source_file_path).channels                       
+        else:
+            # For .wv files, use the duration from the metadata extraction
+            source_duration = get_wavpack_duration(source_file_path)
+            num_channels = get_wavpack_channelCount(source_file_path)
+
+        if (np.sqrt(num_channels)/int(np.sqrt(num_channels))==1) and (num_channels >= get_number_of_ambisonics_channels(self.ambisonics_order)):
+            # valid HOA background!                
+            # TODO: this is a lazy check, improve validation
+            is_hoa = True                
 
         # Determine event duration
         # For background events the duration is fixed to self.duration
@@ -1633,7 +1652,8 @@ class AmbiScaper:
                                        snr=snr,
                                        role=role,
                                        pitch_shift=pitch_shift,
-                                       time_stretch=time_stretch)
+                                       time_stretch=time_stretch,
+                                       is_hoa=is_hoa)
         # Return
         return instantiated_event
 
@@ -2471,76 +2491,135 @@ class AmbiScaper:
                 for i, e in enumerate(annotation_event.data):
                     audio_event_filename = e.value['event_id']+'.wav'
                     #isolated_events_audio_path = [] 
-                    if e.value['role'] == 'background':
-                        # Concatenate background if necessary.
-                        source_duration = sf.info(e.value['source_file']).duration
-                        ntiles = int(
-                            max(self.duration // source_duration + 1, 1))
-
-                        # Create transformer
-                        tfm = sox.Transformer()
-                        # Ensure consistent sampling rate and channels
-                        # Need both a convert operation (to do the conversion),
-                        # and set_output_format (to have sox interpret the output
-                        # correctly).
-                        tfm.convert(
-                            samplerate=self.sr,
-                            n_channels=1, #=self.n_channels,
-                            bitdepth=None
-                        )
-                        tfm.set_output_format(
-                            rate=self.sr,
-                            channels=1 #self.n_channels
-                        )
-
-                        # PROCESS BEFORE COMPUTING LUFS
-                        tmpfiles_internal = []
-                        with _close_temp_files(tmpfiles_internal):
-                            # create internal tmpfile
-                            tmpfiles_internal.append(
-                                tempfile.NamedTemporaryFile(
-                                    suffix='.wav', delete=False))
-                            # read in background off disk, using start and stop 
-                            # to only read the necessary audio
-                            event_sr = sf.info(e.value['source_file']).samplerate
-                            start = int(e.value['source_time'] * event_sr + 1) #TODO: +1 to align with old method, remove later
-                            stop = int((e.value['source_time'] + e.value['event_duration']) * event_sr + 1)
-                            event_audio, event_sr = sf.read(
-                                e.value['source_file'], always_2d=True,
-                                start=start, stop=stop)
-                            # tile the background along the appropriate dimensions
-                            event_audio = np.tile(event_audio, (ntiles, 1))
-                            event_audio = event_audio[:stop]
-                            event_audio = tfm.build_array(
-                                input_array=event_audio,
-                                sample_rate_in=event_sr
-                            )
-                            event_audio = event_audio.reshape(-1, 1)
-                            # NOW compute LUFS
-                            bg_lufs = get_integrated_lufs(event_audio, self.sr)
-
-                            # Normalize background to reference DB.
-                            gain = self.ref_db - bg_lufs
-                            event_audio = np.exp(gain * np.log(10) / 20) * event_audio
-
-                            event_audio_list.append(event_audio[:duration_in_samples])
-                            if save_isolated_events == True:
-                                preprocessed_files.append(os.path.join(destination_source_path, audio_event_filename))                            
-                                sf.write(preprocessed_files[-1], event_audio_list[-1], self.sr)
-                            if not annotation_reverb:
-                            # Apply just maximum spread (W gain is 1 in SN3D)
-                                input_volumes = get_ambisonics_spread_coefs(
-                                1.0,
-                                self.ambisonics_spread_slope,
-                                self.ambisonics_order)
-                                
-                                temp = event_audio_list[-1] * input_volumes
-                                mix += temp
-
-                                processed_tmpfiles.append(
+                    if e.value['role'] == 'background':                        
+                        if e.value['is_hoa'] == True: 
+                            # TODO: assuming that HOA backgrounds are stored as wavpack files, add support e.g., for .wav, .flac, and .opus                            
+                            source_duration = get_wavpack_duration(e.value['source_file'])
+                            event_sr = get_wavpack_sampleRate(e.value['source_file'])                            
+                            # print('Processing HOA background:', e.value['source_file'])
+                            # PROCESS BEFORE COMPUTING LUFS
+                            tmpfiles_internal = []
+                            with _close_temp_files(tmpfiles_internal):
+                                # create internal tmpfile
+                                tmpfiles_internal.append(
                                     tempfile.NamedTemporaryFile(
-                                    suffix='.wav', delete=False))
-                                sf.write(processed_tmpfiles[-1].name, temp, self.sr)
+                                        suffix='.wav', delete=False))
+                                # read in background off disk, using start and stop 
+                                # to only read the necessary audio
+                                
+                                start = int(e.value['source_time'] * event_sr) 
+                                stop = int((e.value['source_time'] + e.value['event_duration']) * event_sr)
+                                cmd = ['wvunpack', e.value['source_file'], '--skip='+str(start), '--until='+str(stop), '-y', '-o', tmpfiles_internal[-1].name]
+                                try:                                    
+                                    result = subprocess.run(cmd, capture_output=True, text=True, check=True)
+                                except Exception as e:
+                                    raise AmbiScaperError('Error during wavpack unpacking of HOA background: '+ str(e))
+                                
+                                event_audio, event_sr = sf.read(tmpfiles_internal[-1].name)
+                                event_audio = event_audio[:,0:get_number_of_ambisonics_channels(self.ambisonics_order)] # take only needed channels
+                                
+                                if event_sr != self.sr:
+                                    # resample
+                                    event_audio = resampy.resample(event_audio, event_sr, self.sr, axis=0, filter='kaiser_fast')                              
+                                    event_sr = self.sr
+                                
+                                if e.value['event_azimuth'] or e.value['event_elevation']:
+                                    # apply rotation                                    
+                                    rotation_mtx = spa.sph.sh_rotation_matrix(self.ambisonics_order, e.value['event_azimuth']*np.pi/180, e.value['event_elevation']*np.pi/180, 0, sh_type='real').T  
+                                    event_audio @= rotation_mtx
+
+                                # tile the background along the appropriate dimensions
+                                                                                 
+                                ntiles = int(max(self.duration // source_duration + 1, 1))
+                                event_audio = np.tile(event_audio, (ntiles, 1))
+                                
+                                event_audio = event_audio[:duration_in_samples,:]
+                                
+                                # NOW compute LUFS from W-channel (it's not a perfect estimate)
+                                bg_lufs = get_integrated_lufs(event_audio[:,0], self.sr)
+
+                                # Normalize background to reference DB.
+                                gain = self.ref_db - bg_lufs
+                                event_audio = np.exp(gain * np.log(10) / 20) * event_audio
+                                
+                                # add to output mix
+                                mix += event_audio 
+
+                                if save_isolated_events == True:
+                                    # saving HOA background file as .wav, this will likely be a large file
+                                    preprocessed_files.append(os.path.join(destination_source_path, audio_event_filename))                            
+                                    sf.write(preprocessed_files[-1], event_audio, self.sr) 
+                        else:
+
+                            # Concatenate background if necessary.
+                            source_duration = sf.info(e.value['source_file']).duration
+                            ntiles = int(
+                                max(self.duration // source_duration + 1, 1))
+
+                            # Create transformer
+                            tfm = sox.Transformer()
+                            # Ensure consistent sampling rate and channels
+                            # Need both a convert operation (to do the conversion),
+                            # and set_output_format (to have sox interpret the output
+                            # correctly).
+                            tfm.convert(
+                                samplerate=self.sr,
+                                n_channels=1, #=self.n_channels,
+                                bitdepth=None
+                            )
+                            tfm.set_output_format(
+                                rate=self.sr,
+                                channels=1 #self.n_channels
+                            )
+
+                            # PROCESS BEFORE COMPUTING LUFS
+                            tmpfiles_internal = []
+                            with _close_temp_files(tmpfiles_internal):
+                                # create internal tmpfile
+                                tmpfiles_internal.append(
+                                    tempfile.NamedTemporaryFile(
+                                        suffix='.wav', delete=False))
+                                # read in background off disk, using start and stop 
+                                # to only read the necessary audio
+                                event_sr = sf.info(e.value['source_file']).samplerate
+                                start = int(e.value['source_time'] * event_sr) 
+                                stop = int((e.value['source_time'] + e.value['event_duration']) * event_sr)
+                                event_audio, event_sr = sf.read(
+                                    e.value['source_file'], always_2d=True,
+                                    start=start, stop=stop)                                
+                                event_audio = tfm.build_array(
+                                    input_array=event_audio,
+                                    sample_rate_in=event_sr
+                                )
+                                event_audio = event_audio.reshape(-1, 1)
+                                # tile the background along the appropriate dimensions
+                                event_audio = np.tile(event_audio, (ntiles, 1))
+                                event_audio = event_audio[:duration_in_samples]
+                                # NOW compute LUFS
+                                bg_lufs = get_integrated_lufs(event_audio, self.sr)
+
+                                # Normalize background to reference DB.
+                                gain = self.ref_db - bg_lufs
+                                event_audio = np.exp(gain * np.log(10) / 20) * event_audio
+
+                                event_audio_list.append(event_audio)
+                                if save_isolated_events == True:
+                                    preprocessed_files.append(os.path.join(destination_source_path, audio_event_filename))                            
+                                    sf.write(preprocessed_files[-1], event_audio_list[-1], self.sr)
+                                if not annotation_reverb:
+                                # Apply just maximum spread (W gain is 1 in SN3D)
+                                    input_volumes = get_ambisonics_spread_coefs(
+                                    1.0,
+                                    self.ambisonics_spread_slope,
+                                    self.ambisonics_order)
+                                    
+                                    temp = event_audio_list[-1] * input_volumes
+                                    mix += temp
+
+                                    processed_tmpfiles.append(
+                                        tempfile.NamedTemporaryFile(
+                                        suffix='.wav', delete=False))
+                                    sf.write(processed_tmpfiles[-1].name, temp, self.sr)
 
                     elif e.value['role'] == 'foreground':
                         # Create transformer

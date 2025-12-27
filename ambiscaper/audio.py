@@ -173,3 +173,35 @@ def peak_normalize_ambi(soundscape_audio, peak_db=0.0):
     scaled_soundscape_audio = soundscape_audio * scale_factor
 
     return scaled_soundscape_audio, scale_factor    
+
+def  get_wavpack_duration(file_path):
+    """ Get the duration of a .wv file """
+    try:
+        result = subprocess.run(['wvunpack', '-f', file_path], 
+                               capture_output=True, text=True, check=True)
+        parts = result.stdout.split(";")        
+        fs = int(parts[0])        
+        total_seconds = float(int(parts[5]) / fs)                
+    except Exception as e:
+        raise AmbiScaperError(f"Error reading WavPack duraction: {e}")                
+    return total_seconds
+
+def  get_wavpack_channelCount(file_path):
+    """ Get the channel count of a .wv file """
+    try:
+        result = subprocess.run(['wvunpack', '-f4', file_path], 
+                               capture_output=True, text=True, check=True)
+    except Exception as e:
+        raise AmbiScaperError(f"Error reading WavPack channel count: {e}")
+    return int(result.stdout)        
+
+def  get_wavpack_sampleRate(file_path):
+    """ Get the sample rate of a .wv file """
+    try:
+        result = subprocess.run(['wvunpack', '-f1', file_path], 
+                               capture_output=True, text=True, check=True)
+    except Exception as e:
+        raise AmbiScaperError(f"Error reading WavPack sample rate: {e}")
+    return int(result.stdout)        
+
+        

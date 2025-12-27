@@ -96,7 +96,7 @@ def _get_sorted_files(folder_path):
 def _get_sorted_audio_files_recursive(folder_path):
     '''
     Recursive implementation of _get_sorted_files()
-    Also filters only .wav files
+    Also filters only .wav, .flac, .mp3, and .wv files
     :param folder_path:
     :return:
     '''
@@ -109,7 +109,7 @@ def _get_sorted_audio_files_recursive(folder_path):
 
     files = []
     for dirpath, dirnames, dirfiles in os.walk(folder_path):
-        for extension in ('*.wav', '*.flac'): # include also .flac files [NP]
+        for extension in ('*.wav', '*.flac', '*.mp3', '*.wv'): 
             for f in fnmatch.filter(dirfiles, extension):
                 files.append(os.path.join(dirpath,f))
 
