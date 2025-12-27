@@ -25,6 +25,7 @@ num_events = 10 # number of audio events per scene
 
 ambisonics_order = 5
 yawRotationOnly = True  # if True, only yaw rotation is applied, pitch and roll are fixed to zero
+keepHoaScenes = False  # if True, the resulting HOA scenes are kept on disk, otherwise only the FOA version is kept as .flac audio file.
 
 numAmbiCoef = (ambisonics_order+1)*(ambisonics_order+1)
 hrtf_folder = os.path.join(os. getcwd(),'./HRTF/')
@@ -66,17 +67,27 @@ for scene_idx in range(num_scenes):
     ambiscaper = AmbiScaper(duration=soundscape_duration,
                             ambisonics_order=ambisonics_order,
                             fg_path=samples_folder,
-                            bg_path=samples_folder)
+                            bg_path=bg_folder)
 
-    # Configure reference noise floor level
-    ambiscaper.ref_db = -30
+    # Configure reference level ref_db, 
+    # i.e. the loudnes of the background, measured in LUFS. 
+    # Later when we add foreground events, we’ll have to specify an snr (signal-to-noise ratio) value, 
+    # i.e. by how many decibels (dB) should the foreground event be louder (or softer) with respect 
+    # to the background level specified by ref_db.
 
+    ambiscaper.ref_db = -30    
+    ambiscaper.sr = hrtf_sample_rate
     ### Add a background event
 
     # Background events, by definition, have maximum spread
     # That means that they will only contain energy in the W channel (the first one)
 
-    #ambiscaper.add_background(source_file=('const', 'tr-1788d-piece4-sl.wav'), source_time=('const', 0))
+    #ambiscaper.add_background(source_file=('const', 'test.wav'), source_time=('const', 0))
+    
+    ambiscaper.add_background(source_file=('choose', []), 
+                              source_time=('const', 0),
+                              event_azimuth=('uniform', 0, 2 * np.pi))
+    
 
     numChans = 5 # 2 audio channels + 3 head pose channels 
     ### Add an event
@@ -259,67 +270,5 @@ for scene_idx in range(num_scenes):
     if np.max(abs(output_signal[:, 1])) > 1.0:
         print("right channel clips")
 
-    #elif (np.max(abs(output_signal[:,0])) and np.max(abs(output_signal[:,1]))) > 1.0:
-    #    print("both exist hopping")
-    #else:
-    #    print("no hopping")
-
-    if 0:
-        yaw = -yaw_deg*(np.pi/180.0)
-
-        if ambisonics_order>0:
-            cosYaw = np.cos(yaw)
-            sinYaw = np.sin(yaw)
-            mtx[1,1] = cosYaw
-            mtx[3,3] = cosYaw
-            mtx[1,3] = sinYaw
-            mtx[3,1] = -sinYaw
-        if ambisonics_order>1:
-            cos2Yaw = np.cos(2*yaw)
-            sin2Yaw = np.sin(2*yaw)
-            mtx[4,4] = cos2Yaw
-            mtx[8,8] = cos2Yaw
-            mtx[4,8] = sin2Yaw
-            mtx[8,4] = -sin2Yaw
-            mtx[5:8,5:8] = mtx[1:4,1:4]
-        if ambisonics_order>2:
-            cos3Yaw = np.cos(3*yaw)
-            sin3Yaw = np.sin(3*yaw)
-            mtx[9,9] = cos3Yaw
-            mtx[15,15] = cos3Yaw
-            mtx[ 9,15] = sin3Yaw
-            mtx[15, 9] = -sin3Yaw
-            mtx[10:15,10:15] = mtx[4:9,4:9]
-        if ambisonics_order>3:
-            cos4Yaw = np.cos(4*yaw)
-            sin4Yaw = np.sin(4*yaw)
-            mtx[16,16] = cos4Yaw
-            mtx[24,24] = cos4Yaw
-            mtx[16,24] = sin4Yaw
-            mtx[24,16] = -sin4Yaw
-            mtx[17:24,17:24] = mtx[9:16,9:16]
-        if ambisonics_order>4:
-            mtx[25,25] =  np.cos(5*yaw)
-            mtx[35,35] =  mtx[25,25]
-            mtx[25,35] =  np.sin(5*yaw)
-            mtx[35,25] =  -mtx[25,35]
-            mtx[26:35,26:35] = mtx[16:25,16:25]
-
-        hrtf_data_rot = np.matmul(hrtf_data,mtx)
-#        hrtf_data_rot2 = np.matmul(np.matmul(hrtf_data,np.diag(symVec[0:numAmbiCoef])),mtx)
-        hrtf_data_rot2 = np.matmul(hrtf_data,np.matmul(np.diag(symVec[0:numAmbiCoef]),mtx))
-        #hrtf_data_rot2 = np.matmul(np.diag(symVec[0:numAmbiCoef]),np.matmul(hrtf_data,mtx).T).T # doesnt work
-        print(hrtf_data.shape)
-        print(hrtf_data_rot.shape)
-        #test when rotating the hrtfs
-        output_signal2 = np.zeros((output_file_duration_samples+hrtf_data.shape[0]-1,numChans))
-        for k in range(numAmbiCoef):
-            temp = scipy.signal.fftconvolve(ambi_data[:, k], hrtf_data_rot[:, k])
-            temp2 = scipy.signal.fftconvolve(ambi_data[:, k], hrtf_data_rot2[:, k])
-            output_signal2[:,0] += temp
-            output_signal2[:,1] += temp2 #*symVec[k]
-        output_signal[:,2] = yaw_deg/180
-        sf.write(destination_path+"/../"+folder+"_horizontalOnly_rot_"+str(yaw_deg)+"_bin_test.flac", output_signal2, ambi_sample_rate)#, subtype='FLOAT')
-    #remove HOA file to save some HD space:
-    #os.remove(destination_path+"/"+folder+".wav")
-
+    if keepHoaScenes == False:
+        os.remove(destination_path+"/"+folder+".wav")
