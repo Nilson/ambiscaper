@@ -2493,10 +2493,15 @@ class AmbiScaper:
                     #isolated_events_audio_path = [] 
                     if e.value['role'] == 'background':                        
                         if e.value['is_hoa'] == True: 
-                            # TODO: assuming that HOA backgrounds are stored as wavpack files, add support e.g., for .wav, .flac, and .opus                            
-                            source_duration = get_wavpack_duration(e.value['source_file'])
-                            event_sr = get_wavpack_sampleRate(e.value['source_file'])                            
-                            # print('Processing HOA background:', e.value['source_file'])
+                            if e.value['source_file'][-3:] == '.wv':
+                                is_hoa_wavpack = True                            
+                                source_duration = get_wavpack_duration(e.value['source_file'])
+                                event_sr = get_wavpack_sampleRate(e.value['source_file'])
+                            else:
+                                is_hoa_wavpack = False
+                                source_duration = sf.info(e.value['source_file']).duration
+                                event_sr = sf.info(e.value['source_file']).samplerate                            
+                            
                             # PROCESS BEFORE COMPUTING LUFS
                             tmpfiles_internal = []
                             with _close_temp_files(tmpfiles_internal):
@@ -2509,14 +2514,18 @@ class AmbiScaper:
                                 
                                 start = int(e.value['source_time'] * event_sr) 
                                 stop = int((e.value['source_time'] + e.value['event_duration']) * event_sr)
-                                cmd = ['wvunpack', e.value['source_file'], '--skip='+str(start), '--until='+str(stop), '-y', '-o', tmpfiles_internal[-1].name]
-                                try:                                    
-                                    result = subprocess.run(cmd, capture_output=True, text=True, check=True)
-                                except Exception as e:
-                                    raise AmbiScaperError('Error during wavpack unpacking of HOA background: '+ str(e))
+                                if is_hoa_wavpack == True:                                    
+                                    cmd = ['wvunpack', e.value['source_file'], '--skip='+str(start), '--until='+str(stop), '-y', '-o', tmpfiles_internal[-1].name]
+                                    try:                                    
+                                        result = subprocess.run(cmd, capture_output=True, text=True, check=True)
+                                    except Exception as e:
+                                        raise AmbiScaperError('Error during wavpack unpacking of HOA background: '+ str(e) 
+                                                              + ' Is the Wavpack CLI installed? https://www.wavpack.com/downloads.html')
+                                    event_audio, event_sr = sf.read(tmpfiles_internal[-1].name)
+                                else:   
+                                    event_audio, event_sr = sf.read(e.value['source_file'], start=start, stop=stop)                                
                                 
-                                event_audio, event_sr = sf.read(tmpfiles_internal[-1].name)
-                                event_audio = event_audio[:,0:get_number_of_ambisonics_channels(self.ambisonics_order)] # take only needed channels
+                                event_audio = event_audio[:,0:get_number_of_ambisonics_channels(self.ambisonics_order)] # truncate to desired order
                                 
                                 if event_sr != self.sr:
                                     # resample
@@ -2535,7 +2544,7 @@ class AmbiScaper:
                                 
                                 event_audio = event_audio[:duration_in_samples,:]
                                 
-                                # NOW compute LUFS from W-channel (it's not a perfect estimate)
+                                # NOW compute LUFS from W-channel (FIXME: computung from W is not a perfect estimate)
                                 bg_lufs = get_integrated_lufs(event_audio[:,0], self.sr)
 
                                 # Normalize background to reference DB.
@@ -2553,8 +2562,7 @@ class AmbiScaper:
 
                             # Concatenate background if necessary.
                             source_duration = sf.info(e.value['source_file']).duration
-                            ntiles = int(
-                                max(self.duration // source_duration + 1, 1))
+                            ntiles = int(max(self.duration // source_duration + 1, 1))
 
                             # Create transformer
                             tfm = sox.Transformer()
