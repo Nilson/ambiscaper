@@ -10,3 +10,7 @@ setuptools==80.9.0
 six==1.17.0
 soundfile==0.13.1
 sox==1.5.0
+pyloudnorm==0.1.1
+soxbindings==1.2.3
+spaudiopy==0.2.0
+resampy==0.4.3
