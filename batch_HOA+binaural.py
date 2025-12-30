@@ -14,18 +14,40 @@ from random import choice
 #from pedalboard import Pedalboard, Reverb, load_plugin
 import time
 import spaudiopy as spa
-
+import generateBackgroundExamples
 random.seed(42)
 np.random.seed(42)
 
+
+##############################################
 # AmbiScaper settings
 soundscape_duration = 15.0 #35.0
-num_scenes = 20 # number of audio scenes
+num_scenes = 5 #10 #20 # number of audio scenes
 num_events = 10 # number of audio events per scene
 
 ambisonics_order = 5
 yawRotationOnly = True  # if True, only yaw rotation is applied, pitch and roll are fixed to zero
 keepHoaScenes = False  # if True, the resulting HOA scenes are kept on disk, otherwise only the FOA version is kept as .flac audio file.
+samples_folder = './samples/Acoustics_Book'
+bg_folder = './samples/Backgrounds'
+outfolder = os.path.join(os.getcwd(), './Testing/')
+
+##############################################
+
+if bg_folder == './samples/Backgrounds' and not os.path.exists(bg_folder):    
+    os.makedirs(bg_folder)
+    generateBackgroundExamples.main(order=ambisonics_order, duration=soundscape_duration, fs=48000,
+                                    filename=os.path.join(bg_folder, 'background1.wav'),
+                                    noise_type='pink')
+    generateBackgroundExamples.main(order=ambisonics_order, duration=soundscape_duration, fs=48000,
+                                    filename=os.path.join(bg_folder, 'background2.wav'),
+                                    noise_type='white')
+    generateBackgroundExamples.main(order=ambisonics_order, duration=soundscape_duration, fs=48000,
+                                    filename=os.path.join(bg_folder, 'background3.wav'),
+                                    noise_type='brown')
+    
+    
+
 
 numAmbiCoef = (ambisonics_order+1)*(ambisonics_order+1)
 hrtf_folder = os.path.join(os. getcwd(),'./HRTF/')
@@ -45,10 +67,8 @@ for item in os.listdir(ht_path):
         ht_data_name.append(item)
 frame_length = 256
 
-# We want to use the full samples folder as potential events
-samples_folder = './samples/Acoustics_Book'
 
-outfolder = os.path.join(os. getcwd(), './time-varying yaw rotation-horizontalOnly/')
+
 outfolderFOA = os.path.join(outfolder, 'FOA/')
 outfolderBin = os.path.join(outfolder, 'Binaural/')
 
@@ -59,6 +79,7 @@ if not os.path.exists(outfolderFOA):
 if not os.path.exists(outfolderBin): 
     os.mkdir(outfolderBin)
 
+start_overall_time = time.time()
 for scene_idx in range(num_scenes):
     folder = "scene"+str(scene_idx)
     destination_path = os.path.join(outfolder, folder)
@@ -103,7 +124,7 @@ for scene_idx in range(num_scenes):
                              event_elevation=('const', 0),
                              event_spread=('const', 0),
                              snr=('uniform', 0, 10),
-                             pitch_shift=('const', 1),
+                             pitch_shift=('const', 0),
                              time_stretch=('const', 1))
 
 
@@ -114,28 +135,17 @@ for scene_idx in range(num_scenes):
                         peak_normalization=False,
                         generate_txt=True,
                         allow_repeated_source=True,
-                        save_isolated_events=True,
+                        save_isolated_events=False,
                         disable_sox_warnings=True,
                         disable_instantiation_warnings=True)
 
-    print("--- %s seconds ---" % (time.time() - start_time))
+    print("-1- %s seconds - Ambiscaper ---" % (time.time() - start_time))
+    
     ambi_data, ambi_sample_rate = sf.read(destination_path+"/"+folder+".wav")
 
+    sf.write(outfolderFOA+"/"+folder+"_AMBIX.flac", ambi_data[:,0:4], ambi_sample_rate, subtype="PCM_24")  #, subtype='FLOAT')
 
-    #if max(abs(ambi_data[:,0]))>1.0:
-    #    print('ambi_data too hot')
-
-
-    # Test if the nornalization works inside the file core.py. if not, it will print 'normalizing!'
-    maxVal_ambi = np.max(abs(ambi_data[:, 0]))
-    if maxVal_ambi > 0.99:
-        # normalize entire ambi_data
-        print('normalization needed!')
-
-
-    sf.write(outfolderFOA+"/"+folder+"_horizontalOnly_AMBIX.flac", ambi_data[:,0:4], ambi_sample_rate)  #, subtype='FLOAT')
-
-
+    start_time = time.time()
     ## Binauralization with Google Omnitone
     assert(ambi_sample_rate==hrtf_sample_rate)
     #print(ambi_data.shape)
@@ -147,13 +157,12 @@ for scene_idx in range(num_scenes):
         output_signal[:,0] += temp
         output_signal[:,1] += temp*symVec[k]
     maxVal_output = np.amax(abs(output_signal[:, :2]))
-    if maxVal_output > 0.99:
-        print("output_signal_binaural_rot_0 too hot. maximum value is", maxVal_output)
+    if maxVal_output > 0.99: 
+        print("output_signal_binaural_rot_0 too hot. maximum value is", 20.0*np.log10(maxVal_output), "dBFS")
         output_signal[:, :2] /= (maxVal_output * 1.02)
-    sf.write(outfolderBin+"/"+folder+"_horizontalOnly_rot_0_binaural.flac", output_signal, ambi_sample_rate)#, subtype='FLOAT')
-
+    sf.write(outfolderBin+"/"+folder+"_horizontalOnly_rot_0_binaural.flac", output_signal, ambi_sample_rate)#, subtype="PCM_24"subtype='FLOAT')
+    
     selected_ht_filename = choice(ht_data_name)
-
     # print('selected headtracker file is: ', selected_ht_filename)
     ht_filename = os.path.join(ht_path, selected_ht_filename)
     ht_info = sf.info(ht_filename)
@@ -245,7 +254,7 @@ for scene_idx in range(num_scenes):
 
     maxVal_W_rot = max(abs(ambi_data_rot[:, 0]))
     if maxVal_W_rot > 0.99:
-        print('ambi_data_rot too hot, max Val is', maxVal_W_rot)
+        print('ambi_data_rot too hot, max Val is ', maxVal_W_rot)
 
     ## Binauralization with Google Omnitone
     assert(ambi_sample_rate==hrtf_sample_rate)
@@ -257,18 +266,16 @@ for scene_idx in range(num_scenes):
         output_signal[:, 1] += temp*symVec[k]
     maxVal_output = np.amax(abs(output_signal[:, :2]))
     if maxVal_output > 0.99:
-        print("output_signal_binaural too hot. maximum value is", maxVal_output)
+        print("output_signal_binaural too hot. maximum value is ", maxVal_output)
         output_signal[:, :2] /= (maxVal_output * 1.02)
 
-
-    # sf.write(outfolderBin+"/"+folder+"_horizontalOnly_rot_"+str(yaw_deg)+"_binaural_TEST.flac", output_signal, ambi_sample_rate)#, subtype='FLOAT')
-    # output_signal[:, 0] /= (maxVal*1.02)
-    # output_signal[:, 1] /= (maxVal*1.02)
     sf.write(outfolderBin+"/"+folder+"_horizontalOnly_rot_binaural.flac", output_signal, ambi_sample_rate)#, subtype='FLOAT')
     if np.max(abs(output_signal[:, 0])) > 1.0:
         print("left channel clips")
     if np.max(abs(output_signal[:, 1])) > 1.0:
         print("right channel clips")
+    print("-2- %s seconds - Binauralization and Rotation ---" % (time.time() - start_time))
 
     if keepHoaScenes == False:
         os.remove(destination_path+"/"+folder+".wav")
+print("## %s seconds - Overall ---" % (time.time() - start_overall_time))
