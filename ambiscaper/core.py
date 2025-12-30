@@ -2608,26 +2608,26 @@ class AmbiScaper:
 
                                 # Normalize background to reference DB.
                                 gain = self.ref_db - bg_lufs
-                                event_audio = np.exp(gain * np.log(10) / 20) * event_audio
+                                event_audio *= np.exp(gain * np.log(10) / 20)
 
                                 event_audio_list.append(event_audio)
                                 if save_isolated_events == True:
                                     preprocessed_files.append(os.path.join(destination_source_path, audio_event_filename))                            
                                     sf.write(preprocessed_files[-1], event_audio_list[-1], self.sr)
-                                if not annotation_reverb:
+                                
                                 # Apply just maximum spread (W gain is 1 in SN3D)
-                                    input_volumes = get_ambisonics_spread_coefs(
-                                    1.0,
-                                    self.ambisonics_spread_slope,
-                                    self.ambisonics_order)
-                                    
-                                    temp = event_audio_list[-1] * input_volumes
-                                    mix += temp
+                                input_volumes = get_ambisonics_spread_coefs(
+                                1.0,
+                                self.ambisonics_spread_slope,
+                                self.ambisonics_order)
+                                
+                                event_audio = event_audio_list[-1] * input_volumes
+                                mix += event_audio
 
-                                    processed_tmpfiles.append(
-                                        tempfile.NamedTemporaryFile(
-                                        suffix='.wav', delete=False))
-                                    sf.write(processed_tmpfiles[-1].name, temp, self.sr)
+                                if save_isolated_events == True:
+                                    processed_tmpfiles.append(tempfile.NamedTemporaryFile(suffix='.wav', delete=False))
+                                    sf.write(processed_tmpfiles[-1].name, event_audio, self.sr)
+                            
 
                     elif e.value['role'] == 'foreground':
                         # Create transformer
