@@ -79,8 +79,7 @@ def main(order, duration, fs, filename, noise_type):
     # Normalize to -1.0 dBFS
     target_dbfs = -1.0 
     target_linear = 10 ** (target_dbfs / 20.0)
-    if peak > target_linear:        
-        ambisonics_sig *= (target_linear / peak)
+    ambisonics_sig *= (target_linear / peak)
         
     sf.write(filename, ambisonics_sig.T, fs)
     
