@@ -44,13 +44,8 @@ def generate_colored_noise(num_samples, num_channels, noise_color='pink'):
     if np.isinf(scale).any():
         scale[np.isinf(scale)] = 0.0
 
-    # 6. Apply Spectral Scaling
-    S_colored = X * scale
-    
-    # 7. Inverse Transform to Time Domain
-    colored_noise = np.fft.irfft(S_colored, axis=1)
-    
-    return colored_noise
+    # 6. Apply Spectral Scaling and IFFT
+    return np.fft.irfft(X * scale, axis=1)
 
 def main(order, duration, fs, filename, noise_type):
     print(f"--- Generating {order}th Order Diffuse {noise_type.title()} Noise ---")
@@ -60,47 +55,35 @@ def main(order, duration, fs, filename, noise_type):
     
     # --- 1. Setup Virtual Source Grid (The Diffuse Field) ---
     # T-design degree should be >= 2*Order + 1
-    degree = 21
-    try:
-        vecs = spaudiopy.grids.load_t_design(degree=degree)
-        grid_type = "T-design"
-    except:
-        # Fallback to a standard hull if specific T-design degree isn't pre-calculated
-        vecs = spaudiopy.grids.load_n_design(degree=2*degree)
-        grid_type = "N-design (Fallback)"
-
+    degree = 21    
+    vecs = spaudiopy.grids.load_t_design(degree=degree)
+    
     num_virtual_sources = vecs.shape[0]
-    #print(f"Grid: {grid_type} with {num_virtual_sources} virtual sources.")
-
+    
     # Convert to spherical coordinates
     azi, zen, r = spaudiopy.utils.cart2sph(vecs[:, 0], vecs[:, 1], vecs[:, 2])
 
-    # --- 2. Generate Multichannel Noise ---
-    #print(f"Synthesizing {noise_type} noise...")
+    # --- 2. Generate Multichannel Noise ---    
     src_signals = generate_colored_noise(num_samples, num_virtual_sources, noise_type)
 
-    # --- 3. Encode to Ambisonics (AmbiX) ---
-    #print("Encoding to Spherical Harmonics (ACN, SN3D)...")
+    # --- 3. Encode to Ambisonics (AmbiX) ---    
     # Generate SH Matrix
     Y_nm = spaudiopy.sph.sh_matrix(order, azi, zen, sh_type='real')
     
     # Matrix Multiplication: (Channels, Sources) @ (Sources, Samples)
     ambisonics_sig = Y_nm.T @ src_signals
 
-    # --- 4. Normalize and Save ---
-    ambisonics_sig = ambisonics_sig.T # Transpose to (Samples, Channels)
-    
-    # Normalize to -1.0 dBFS
-    #print("Normalizing...")
+    # --- 4. Normalize and Save ---    
+           
     peak = np.max(np.abs(ambisonics_sig))
+    # Normalize to -1.0 dBFS
     target_dbfs = -1.0 
-    if peak > 0:
-        target_linear = 10 ** (target_dbfs / 20.0)
-        ambisonics_sig = ambisonics_sig * (target_linear / peak)
+    target_linear = 10 ** (target_dbfs / 20.0)
+    if peak > target_linear:        
+        ambisonics_sig *= (target_linear / peak)
+        
+    sf.write(filename, ambisonics_sig.T, fs)
     
-    #print(f"Saving to: {filename}")
-    sf.write(filename, ambisonics_sig, fs)
-    #print("Done.")
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Generate Diffuse Ambisonics Noise Field")
