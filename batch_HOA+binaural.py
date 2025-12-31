@@ -65,7 +65,9 @@ ht_data_name = []
 for item in os.listdir(ht_path):
     if os.path.splitext(item)[1] == '.flac':
         ht_data_name.append(item)
-frame_length = 256
+# for head-tracking based soundfield rotation 
+frame_length = 512
+hopsize = int(frame_length/2)
 
 
 
@@ -190,9 +192,11 @@ for scene_idx in range(num_scenes):
     output_signal = np.zeros((output_file_duration_samples + hrtf_data.shape[0] - 1, numChans))
     min_length = min(len(ambi_data), len(ht_data_trunc))
     
-    yaw, pitch, roll = 0, 0, 0
+    yaw, pitch, roll = 0, 0, 0    
+    w = np.hanning(frame_length)
+    w = w[:, np.newaxis] 
     if yawRotationOnly == False:
-        for i in np.arange(0, min_length-1, frame_length).tolist():        
+        for i in np.arange(0, min_length-frame_length, hopsize).tolist():        
             yaw = ht_data_trunc[i, 0] * np.pi
             pitch = ht_data_trunc[i, 1] * np.pi
             roll = ht_data_trunc[i, 2] * np.pi 
@@ -200,10 +204,10 @@ for scene_idx in range(num_scenes):
             output_signal[i:i+frame_length,3] = ht_data_trunc[i, 1]            
             output_signal[i:i+frame_length,4] = ht_data_trunc[i, 2]
             mtx = spa.sph.sh_rotation_matrix(ambisonics_order, yaw, pitch, roll, sh_type='real').T  
-            ambi_data_rot[i:i+frame_length,:] = ambi_data[i:i+frame_length,:] @ mtx       
+            ambi_data_rot[i:i+frame_length,:] += (ambi_data[i:i+frame_length,:]*w) @ mtx       
             # TODO: fade with overlap-add to avoid occasional zipper noise artifacts at frame boundaries      
     else: #yaw rotation only, much faster to compute mtx   
-        for i in np.arange(0, min_length-1, frame_length).tolist():   
+        for i in np.arange(0, min_length-frame_length, hopsize).tolist():   
             yaw = ht_data_trunc[i, 0] * np.pi  
             output_signal[i:i+frame_length,2] = ht_data_trunc[i, 0]                                        
             if ambisonics_order>0:
@@ -242,15 +246,16 @@ for scene_idx in range(num_scenes):
                 mtx[35,35] =  mtx[25,25]
                 mtx[25,35] =  np.sin(5*yaw)
                 mtx[35,25] =  -mtx[25,35]
-                mtx[26:35,26:35] = mtx[16:25,16:25]
-            ambi_data_rot[i:i+frame_length,:] = ambi_data[i:i+frame_length,:] @ mtx                
-            # TODO: fade with overlap-add to avoid occasional zipper noise artifacts at frame boundaries
+                mtx[26:35,26:35] = mtx[16:25,16:25]              
+            ambi_data_rot[i:i+frame_length,:] += (ambi_data[i:i+frame_length,:]*w) @ mtx                            
         
-    # process the remaining samples   
-    ambi_data_rot[i + frame_length+1:len(ambi_data)-1, :] = ambi_data[i + frame_length+1:len(ambi_data)-1, :] @ mtx
-    output_signal[i + frame_length+1:len(output_signal)-1, 2] = yaw / np.pi
-    output_signal[i + frame_length+1:len(output_signal)-1, 3] = pitch / np.pi
-    output_signal[i + frame_length+1:len(output_signal)-1, 4] = roll / np.pi
+    # process the remaining samples       
+    tail = ambi_data[i + hopsize : len(ambi_data), :]
+    tail[0:hopsize,:] *= w[0:hopsize,:]
+    ambi_data_rot[i + hopsize : len(ambi_data), :] += tail @ mtx
+    output_signal[i + hopsize : len(output_signal), 2] = yaw / np.pi
+    output_signal[i + hopsize : len(output_signal), 3] = pitch / np.pi
+    output_signal[i + hopsize : len(output_signal), 4] = roll / np.pi
 
     maxVal_W_rot = max(abs(ambi_data_rot[:, 0]))
     if maxVal_W_rot > 0.99:
